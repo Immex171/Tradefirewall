@@ -1,12 +1,20 @@
 import Link from 'next/link';
+import { SiteNav } from '@/components/SiteNav';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { runBacktest } from '@/lib/backtest';
+import { determineDecision, RiskProfile } from '@/lib/riskEngine';
 import { ValidationMetrics } from '@/components/ValidationMetrics';
 import { ConfusionMatrix } from '@/components/ConfusionMatrix';
+import {
+  FACTOR_BAND_BAR_CLASS,
+  RISK_BAND_TAILWIND_TEXT_CLASS,
+  factorBand,
+  riskBand,
+} from '@/lib/riskBand';
 
-interface Scenario {
+interface ScenarioInput {
   id: string;
   title: string;
   subtitle: string;
@@ -17,7 +25,6 @@ interface Scenario {
     holdingPeriod: string;
     riskProfile: string;
   };
-  decision: 'APPROVE' | 'CAUTION' | 'REDUCE_OR_WAIT' | 'BLOCK';
   riskScore: number;
   topFactors: { name: string; score: number; weight: string }[];
   whyDecision: string;
@@ -25,14 +32,18 @@ interface Scenario {
   category: string;
 }
 
-const SCENARIOS: Scenario[] = [
+/** `decision` is derived, never hand-written — see SCENARIOS below. */
+interface Scenario extends ScenarioInput {
+  decision: ReturnType<typeof determineDecision>;
+}
+
+const RAW_SCENARIOS: ScenarioInput[] = [
   {
     id: 'btc-crash-2022',
     title: 'BTC Large Buy — Market Crash Conditions',
     subtitle: 'Modelled on May 2022 LUNA collapse (-80% sector, extreme volatility)',
     category: 'Market Crash',
     trade: { symbol: 'BTC', action: 'Buy', amount: '$25,000', holdingPeriod: 'Intraday', riskProfile: 'Conservative' },
-    decision: 'BLOCK',
     riskScore: 91,
     topFactors: [
       { name: 'Volatility', score: 90, weight: '18%' },
@@ -52,7 +63,6 @@ const SCENARIOS: Scenario[] = [
     subtitle: 'Modelled on Q1 2024 conditions: moderate volatility, positive sector momentum',
     category: 'Normal Market',
     trade: { symbol: 'ETH', action: 'Buy', amount: '$3,000', holdingPeriod: '7 Days', riskProfile: 'Balanced' },
-    decision: 'APPROVE',
     riskScore: 28,
     topFactors: [
       { name: 'Trend', score: 25, weight: '15%' },
@@ -72,8 +82,7 @@ const SCENARIOS: Scenario[] = [
     subtitle: 'Modelled on SOL during rapid 30% 48h run-up with thin order book',
     category: 'High Volatility',
     trade: { symbol: 'SOL', action: 'Buy', amount: '$5,000', holdingPeriod: '1 Day', riskProfile: 'Balanced' },
-    decision: 'CAUTION',
-    riskScore: 54,
+    riskScore: 44,
     topFactors: [
       { name: 'Volatility', score: 75, weight: '18%' },
       { name: 'Execution', score: 68, weight: '10%' },
@@ -82,7 +91,7 @@ const SCENARIOS: Scenario[] = [
       { name: 'Trend', score: 30, weight: '15%' },
     ],
     whyDecision:
-      'The trend is bullish (supporting the buy), but SOL\'s recent 30% run has elevated volatility to 75/100. The SoDEX orderbook shows thin ask-side depth, raising execution risk. The composite score (54) sits in the CAUTION band for a balanced profile. The engine recommends reducing size by 25–50% rather than blocking entirely.',
+      'The trend is bullish (supporting the buy), but SOL\'s recent 30% run has elevated volatility to 75/100. The SoDEX orderbook shows thin ask-side depth, raising execution risk. The composite score (44) sits in the CAUTION band for a balanced profile, which spans 36–50. The engine recommends reducing size by 25–50% rather than blocking entirely.',
     lesson:
       'CAUTION does not mean STOP — it means trade smaller. Buying into strength is valid; buying $5k into a thin book after a 30% run without caution is reckless.',
   },
@@ -92,7 +101,6 @@ const SCENARIOS: Scenario[] = [
     subtitle: 'Small-cap token with $50k daily volume, $10k order attempted',
     category: 'Low Liquidity',
     trade: { symbol: 'HYPE', action: 'Buy', amount: '$10,000', holdingPeriod: '1 Day', riskProfile: 'Aggressive' },
-    decision: 'BLOCK',
     riskScore: 86,
     topFactors: [
       { name: 'Liquidity', score: 90, weight: '10%' },
@@ -112,7 +120,6 @@ const SCENARIOS: Scenario[] = [
     subtitle: 'Buying BTC intraday while 90-day kline trend is strongly bearish',
     category: 'Trend Mismatch',
     trade: { symbol: 'BTC', action: 'Buy', amount: '$2,000', holdingPeriod: 'Intraday', riskProfile: 'Balanced' },
-    decision: 'REDUCE_OR_WAIT',
     riskScore: 67,
     topFactors: [
       { name: 'Trend', score: 85, weight: '15%' },
@@ -128,6 +135,18 @@ const SCENARIOS: Scenario[] = [
   },
 ];
 
+/**
+ * Decisions are derived from the live engine's own `determineDecision()` using each
+ * scenario's score and risk profile, rather than hand-written per scenario. Previously
+ * `sol-high-vol` declared CAUTION at score 54, but the balanced CAUTION band ends at 50,
+ * so the page contradicted the very engine it claims to validate. Deriving the value
+ * makes that class of drift impossible — edit a score and the badge follows.
+ */
+const SCENARIOS: Scenario[] = RAW_SCENARIOS.map((s) => ({
+  ...s,
+  decision: determineDecision(s.riskScore, s.trade.riskProfile.toLowerCase() as RiskProfile),
+}));
+
 const DECISION_CONFIG = {
   APPROVE: { cls: 'bg-success text-background', label: 'APPROVE', border: 'border-success/30', bg: 'bg-success/5' },
   CAUTION: { cls: 'bg-warning text-background', label: 'CAUTION', border: 'border-warning/30', bg: 'bg-warning/5' },
@@ -135,14 +154,12 @@ const DECISION_CONFIG = {
   BLOCK: { cls: 'bg-danger text-white', label: 'BLOCK', border: 'border-danger/30', bg: 'bg-danger/5' },
 };
 
-const SCORE_COLOR = (s: number) =>
-  s >= 76 ? 'text-danger' : s >= 51 ? 'text-orange-risk' : s >= 26 ? 'text-warning' : 'text-success';
+const SCORE_COLOR = (s: number) => RISK_BAND_TAILWIND_TEXT_CLASS[riskBand(s)];
 
-const FACTOR_BAR = (s: number) =>
-  s >= 70 ? 'bg-danger' : s >= 50 ? 'bg-orange-risk' : s >= 30 ? 'bg-warning' : 'bg-success';
+const FACTOR_BAR = (s: number) => FACTOR_BAND_BAR_CLASS[factorBand(s)];
 
 export default async function ValidatePage() {
-  const categoryCounts = SCENARIOS.reduce<Record<string, number>>((acc, s) => {
+  const decisionCounts = SCENARIOS.reduce<Record<string, number>>((acc, s) => {
     acc[s.decision] = (acc[s.decision] ?? 0) + 1;
     return acc;
   }, {});
@@ -158,32 +175,32 @@ export default async function ValidatePage() {
   return (
     <div className="min-h-screen bg-background">
       {/* Nav */}
-      <nav className="terminal-navbar sticky top-0 z-50 backdrop-blur-sm">
-        <div className="max-w-7xl mx-auto px-4 h-full flex items-center justify-between">
-          <Link href="/" className="logo-text text-xl">
-            tradefirewall<span className="logo-underscore">_</span>
-          </Link>
-          <div className="flex items-center gap-4">
+      <SiteNav
+        actions={
+          <>
             <Link href="/check-trade">
               <Button className="btn-secondary px-4 py-2 text-sm">Risk Engine</Button>
             </Link>
             <Link href="/dashboard">
               <Button className="btn-secondary px-4 py-2 text-sm">Dashboard</Button>
             </Link>
-          </div>
-        </div>
-      </nav>
+          </>
+        }
+      />
 
-      <div className="max-w-5xl mx-auto px-4 py-12 space-y-12">
+      <main className="max-w-5xl mx-auto px-4 py-12 space-y-12">
         {/* Header */}
         <div className="space-y-4">
           <div className="text-label text-primary">Validation &amp; Stress Testing</div>
           <h1 className="text-3xl font-bold text-text-primary">Is TradeFirewall&apos;s risk score actually right?</h1>
           <p className="text-body max-w-3xl leading-relaxed">
-            This page has two parts. First, real quantitative validation: real historical price data replayed through the exact same
-            scoring functions the live engine uses, with honest false-positive/negative rates — not a demo, an actual backtest.
-            Second, five hand-built illustrative scenarios that trace a decision factor-by-factor for readability. Each section is
-            labeled so you always know which is which.
+            This page has two parts. First, real quantitative validation: real historical price data replayed through the
+            engine&apos;s own scoring pipeline — the same weighted combination, the same decision thresholds, and 7 of the
+            10 factor functions verbatim — with honest false-positive/negative rates, not a demo, an actual backtest.
+            Volatility is the one exception: the live function is tuned to hourly bars, so the backtest applies an
+            equivalent daily-bar variant rather than mis-scaling it (see Methodology). Second, five hand-built
+            illustrative scenarios that trace a decision factor-by-factor for readability. Each section is labeled so you
+            always know which is which.
           </p>
         </div>
 
@@ -231,7 +248,12 @@ export default async function ValidatePage() {
               </Card>
 
               <div>
-                <h3 className="text-lg font-semibold text-text-primary mb-4">What TradeFirewall would have prevented</h3>
+                <h3 className="text-lg font-semibold text-text-primary mb-4">Real flagged rows from the backtest</h3>
+                <p className="text-body text-sm text-text-secondary mb-4 max-w-3xl leading-relaxed">
+                  These are genuine historical rows the engine scored and graded. Each is a counterfactual, not a
+                  saved trade: we cannot know what any real person would have done, so nothing here is a dollar figure
+                  avoided.
+                </p>
                 <div className="grid md:grid-cols-2 gap-4">
                   {backtest.scenarios.slice(0, 12).map((s, idx) => {
                     const cfg = DECISION_CONFIG[s.row.decision];
@@ -274,7 +296,7 @@ export default async function ValidatePage() {
 
           {/* Summary row */}
           <div className="flex flex-wrap gap-3 pt-2">
-            {Object.entries(categoryCounts).map(([decision, count]) => {
+            {Object.entries(decisionCounts).map(([decision, count]) => {
               const cfg = DECISION_CONFIG[decision as keyof typeof DECISION_CONFIG];
               return (
                 <Badge key={decision} className={`${cfg.cls} px-3 py-1.5 text-sm`}>
@@ -292,13 +314,18 @@ export default async function ValidatePage() {
             <p>
               <span className="text-text-primary font-medium">How scenarios are constructed:</span> Each scenario uses realistic market parameters
               drawn from historical events or identifiable market structures (crash conditions, thin books, sustained bearish trends).
-              Risk scores are computed by the same weighted engine used in production: 10 factors, fixed weights summing to 1.0,
-              thresholds adjusted per risk profile (conservative / balanced / aggressive).
+              These scores are <span className="text-text-primary font-medium">hand-assigned, not computed</span>. They are
+              plausible for the situation described and were chosen to illustrate factor behaviour; the badge beside each
+              card is derived from the live{' '}
+              <span className="font-mono">determineDecision()</span> so the thresholds shown are the real ones, but the score
+              feeding them is a literal. Only the backtest section above runs real prices through the real scoring path.
             </p>
             <p>
-              <span className="text-text-primary font-medium">False positive / false negative analysis:</span> TradeFirewall is calibrated to prefer
-              false positives (block a borderline trade) over false negatives (approve a genuinely dangerous trade). This matches the product&apos;s mission:
-              preventing bad trades matters more than maximising trade throughput. Conservative profiles block at score ≥ 60, balanced at ≥ 70, aggressive at ≥ 80.
+              <span className="text-text-primary font-medium">Where the thresholds sit:</span> a trade is APPROVE at or below
+              the profile&apos;s approve score, CAUTION up to caution, REDUCE_OR_WAIT up to reduce, and BLOCK above it.
+              Built-in profiles block above 60 (conservative), 70 (balanced) and 80 (aggressive); custom profiles set
+              their own. Blocking a borderline trade is treated as the cheaper error here, so the profiles are skewed
+              toward earlier BLOCKs.
             </p>
           </CardContent>
         </Card>
@@ -397,7 +424,7 @@ export default async function ValidatePage() {
             </Link>
           </CardContent>
         </Card>
-      </div>
+      </main>
     </div>
   );
 }

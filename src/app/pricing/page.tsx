@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { SiteNav } from '@/components/SiteNav';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -9,28 +10,24 @@ export default function PricingPage() {
   return (
     <div className="min-h-screen bg-background">
       {/* Navigation */}
-      <nav className="terminal-navbar sticky top-0 z-50 backdrop-blur-sm">
-        <div className="max-w-7xl mx-auto px-4 h-full flex items-center justify-between">
-          <Link href="/" className="logo-text text-xl">
-            tradefirewall<span className="logo-underscore">_</span>
+      <SiteNav
+        actions={
+          <Link href="/check-trade">
+            <Button className="btn-primary px-4 py-2 text-sm">Go to App</Button>
           </Link>
-          <div className="flex items-center space-x-4">
-            <Link href="/check-trade">
-              <Button className="btn-primary px-4 py-2 text-sm">Go to App</Button>
-            </Link>
-          </div>
-        </div>
-      </nav>
+        }
+      />
 
-      <div className="max-w-7xl mx-auto px-4 py-12">
+      <main className="max-w-7xl mx-auto px-4 py-12">
         {/* Header */}
         <div className="text-center mb-16">
           <h1 className="text-section-heading mb-6">
-            Choose Your Risk Intelligence Plan
+            Intended Pricing
           </h1>
           <p className="text-xl text-body max-w-3xl mx-auto leading-relaxed">
-            From individual traders to institutional platforms, TradeFirewall scales with your needs. 
-            Start free and upgrade as you grow.
+            This is the packaging TradeFirewall is intended to launch with. Nothing on this page is for sale: there is
+            no checkout, no account, no payment processing, and no quota enforcement. Every capability listed under
+            &ldquo;what works today&rdquo; is already usable by anyone, at no cost.
           </p>
         </div>
 
@@ -49,7 +46,7 @@ export default function PricingPage() {
                   <div className="w-4 h-4 bg-success/20 rounded-full flex items-center justify-center">
                     <div className="w-2 h-2 bg-success rounded-full"></div>
                   </div>
-                  <span className="text-text-secondary">10 trade checks/month</span>
+                  <span className="text-text-secondary">10 trade checks/month — limit not yet enforced</span>
                 </li>
                 <li className="flex items-center space-x-2">
                   <div className="w-4 h-4 bg-success/20 rounded-full flex items-center justify-center">
@@ -72,7 +69,7 @@ export default function PricingPage() {
               </ul>
               <Link href="/check-trade">
                 <Button className="w-full btn-secondary mt-6">
-                  Start Free
+                  Open the App
                 </Button>
               </Link>
             </CardContent>
@@ -96,25 +93,25 @@ export default function PricingPage() {
                   <div className="w-4 h-4 bg-success/20 rounded-full flex items-center justify-center">
                     <div className="w-2 h-2 bg-success rounded-full"></div>
                   </div>
-                  <span className="text-text-secondary">500 trade checks/month</span>
+                  <span className="text-text-secondary">500 trade checks/month — limit not yet enforced</span>
                 </li>
                 <li className="flex items-center space-x-2">
                   <div className="w-4 h-4 bg-success/20 rounded-full flex items-center justify-center">
                     <div className="w-2 h-2 bg-success rounded-full"></div>
                   </div>
-                  <span className="text-text-secondary">Advanced risk models</span>
+                  <span className="text-text-secondary">Advanced risk models — one weighted model ships today</span>
                 </li>
                 <li className="flex items-center space-x-2">
                   <div className="w-4 h-4 bg-success/20 rounded-full flex items-center justify-center">
                     <div className="w-2 h-2 bg-success rounded-full"></div>
                   </div>
-                  <span className="text-text-secondary">Portfolio risk tracking</span>
+                  <span className="text-text-secondary">Portfolio risk tracking — not built</span>
                 </li>
                 <li className="flex items-center space-x-2">
                   <div className="w-4 h-4 bg-success/20 rounded-full flex items-center justify-center">
                     <div className="w-2 h-2 bg-success rounded-full"></div>
                   </div>
-                  <span className="text-text-secondary">Real-time alerts</span>
+                  <span className="text-text-secondary">Real-time alerts — not built</span>
                 </li>
                 <li className="flex items-center space-x-2">
                   <div className="w-4 h-4 bg-success/20 rounded-full flex items-center justify-center">
@@ -132,7 +129,7 @@ export default function PricingPage() {
                   window.location.href = `mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
                 }}
               >
-                Start Pro Trial
+                Express interest (placeholder inbox)
               </Button>
             </CardContent>
           </Card>
@@ -150,19 +147,19 @@ export default function PricingPage() {
                   <div className="w-4 h-4 bg-success/20 rounded-full flex items-center justify-center">
                     <div className="w-2 h-2 bg-success rounded-full"></div>
                   </div>
-                  <span className="text-text-secondary">Unlimited trade checks</span>
+                  <span className="text-text-secondary">Unlimited trade checks — no quota enforced</span>
                 </li>
                 <li className="flex items-center space-x-2">
                   <div className="w-4 h-4 bg-success/20 rounded-full flex items-center justify-center">
                     <div className="w-2 h-2 bg-success rounded-full"></div>
                   </div>
-                  <span className="text-text-secondary">Custom risk profiles</span>
+                  <span className="text-text-secondary">Custom risk profiles (beta)</span>
                 </li>
                 <li className="flex items-center space-x-2">
                   <div className="w-4 h-4 bg-success/20 rounded-full flex items-center justify-center">
                     <div className="w-2 h-2 bg-success rounded-full"></div>
                   </div>
-                  <span className="text-text-secondary">API access (1K calls/mo)</span>
+                  <span className="text-text-secondary">API access (1K calls/mo) — no quota enforced</span>
                 </li>
                 <li className="flex items-center space-x-2">
                   <div className="w-4 h-4 bg-success/20 rounded-full flex items-center justify-center">
@@ -174,7 +171,7 @@ export default function PricingPage() {
                   <div className="w-4 h-4 bg-success/20 rounded-full flex items-center justify-center">
                     <div className="w-2 h-2 bg-success rounded-full"></div>
                   </div>
-                  <span className="text-text-secondary">Webhook integrations</span>
+                  <span className="text-text-secondary">Webhook integrations — not built</span>
                 </li>
               </ul>
               <Button 
@@ -186,7 +183,7 @@ export default function PricingPage() {
                   window.location.href = `mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
                 }}
               >
-                Start Advanced
+                Express interest (placeholder inbox)
               </Button>
             </CardContent>
           </Card>
@@ -204,13 +201,13 @@ export default function PricingPage() {
                   <div className="w-4 h-4 bg-success/20 rounded-full flex items-center justify-center">
                     <div className="w-2 h-2 bg-success rounded-full"></div>
                   </div>
-                  <span className="text-text-secondary">10K API calls/month</span>
+                  <span className="text-text-secondary">10K API calls/month — no quota enforced</span>
                 </li>
                 <li className="flex items-center space-x-2">
                   <div className="w-4 h-4 bg-success/20 rounded-full flex items-center justify-center">
                     <div className="w-2 h-2 bg-success rounded-full"></div>
                   </div>
-                  <span className="text-text-secondary">Telegram/Discord bots</span>
+                  <span className="text-text-secondary">Telegram/Discord bots — not built</span>
                 </li>
                 <li className="flex items-center space-x-2">
                   <div className="w-4 h-4 bg-success/20 rounded-full flex items-center justify-center">
@@ -222,13 +219,13 @@ export default function PricingPage() {
                   <div className="w-4 h-4 bg-success/20 rounded-full flex items-center justify-center">
                     <div className="w-2 h-2 bg-success rounded-full"></div>
                   </div>
-                  <span className="text-text-secondary">Community dashboard</span>
+                  <span className="text-text-secondary">Community dashboard — single-user dashboard only</span>
                 </li>
                 <li className="flex items-center space-x-2">
                   <div className="w-4 h-4 bg-success/20 rounded-full flex items-center justify-center">
                     <div className="w-2 h-2 bg-success rounded-full"></div>
                   </div>
-                  <span className="text-text-secondary">White-label options</span>
+                  <span className="text-text-secondary">White-label options — not built</span>
                 </li>
               </ul>
               <Button 
@@ -240,7 +237,7 @@ export default function PricingPage() {
                   window.location.href = `mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
                 }}
               >
-                Start Community
+                Express interest (placeholder inbox)
               </Button>
             </CardContent>
           </Card>
@@ -258,7 +255,7 @@ export default function PricingPage() {
                   <div className="w-4 h-4 bg-success/20 rounded-full flex items-center justify-center">
                     <div className="w-2 h-2 bg-success rounded-full"></div>
                   </div>
-                  <span className="text-text-secondary">Unlimited API calls</span>
+                  <span className="text-text-secondary">Unlimited API calls — no quota enforced</span>
                 </li>
                 <li className="flex items-center space-x-2">
                   <div className="w-4 h-4 bg-success/20 rounded-full flex items-center justify-center">
@@ -270,19 +267,19 @@ export default function PricingPage() {
                   <div className="w-4 h-4 bg-success/20 rounded-full flex items-center justify-center">
                     <div className="w-2 h-2 bg-success rounded-full"></div>
                   </div>
-                  <span className="text-text-secondary">On-premise deployment</span>
+                  <span className="text-text-secondary">On-premise deployment — not built</span>
                 </li>
                 <li className="flex items-center space-x-2">
                   <div className="w-4 h-4 bg-success/20 rounded-full flex items-center justify-center">
                     <div className="w-2 h-2 bg-success rounded-full"></div>
                   </div>
-                  <span className="text-text-secondary">Dedicated support</span>
+                  <span className="text-text-secondary">Dedicated support — none committed</span>
                 </li>
                 <li className="flex items-center space-x-2">
                   <div className="w-4 h-4 bg-success/20 rounded-full flex items-center justify-center">
                     <div className="w-2 h-2 bg-success rounded-full"></div>
                   </div>
-                  <span className="text-text-secondary">99.99% SLA</span>
+                  <span className="text-text-secondary">Uptime target — none committed</span>
                 </li>
               </ul>
               <Button 
@@ -294,117 +291,101 @@ export default function PricingPage() {
                   window.location.href = `mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
                 }}
               >
-                Contact Sales
+                Contact (placeholder inbox)
               </Button>
             </CardContent>
           </Card>
         </div>
-        {/* Feature Comparison */}
+        {/* What actually works today */}
         <div className="mb-16">
-          <h2 className="text-section-heading mb-12 text-center">Feature Comparison</h2>
-          
+          <h2 className="text-section-heading mb-4 text-center">What Actually Works Today</h2>
+          <p className="text-body max-w-3xl mx-auto text-center mb-12 leading-relaxed">
+            The table below is the honest one: what this build does and does not do. It replaces the usual per-tier
+            feature grid, because there are no tiers yet — everything that exists is available to everyone, and nothing
+            is gated.
+          </p>
+
           <Card className="terminal-card">
             <CardContent className="p-0">
               <div className="terminal-table">
                 <table className="w-full">
                   <thead>
                     <tr>
-                      <th className="text-left">Feature</th>
-                      <th className="text-center">Free</th>
-                      <th className="text-center">Pro</th>
-                      <th className="text-center">Advanced</th>
-                      <th className="text-center">Community</th>
-                      <th className="text-center">Enterprise</th>
+                      <th className="text-left">Capability</th>
+                      <th className="text-center">Status</th>
+                      <th className="text-left">Notes</th>
                     </tr>
                   </thead>
                   <tbody>
                     <tr>
-                      <td className="text-text-primary font-medium">Trade Checks per Month</td>
-                      <td className="text-center text-text-secondary">10</td>
-                      <td className="text-center text-text-secondary">500</td>
-                      <td className="text-center text-text-secondary">Unlimited</td>
-                      <td className="text-center text-text-secondary">Unlimited</td>
-                      <td className="text-center text-text-secondary">Unlimited</td>
+                      <td className="text-text-primary font-medium">10-factor risk scoring</td>
+                      <td className="text-center text-success">Working</td>
+                      <td className="text-text-secondary">Live SoSoValue + SoDEX per request, weights published with every score</td>
                     </tr>
                     <tr>
-                      <td className="text-text-primary font-medium">Risk Scoring</td>
-                      <td className="text-center text-success">✓</td>
-                      <td className="text-center text-success">✓</td>
-                      <td className="text-center text-success">✓</td>
-                      <td className="text-center text-success">✓</td>
-                      <td className="text-center text-success">✓</td>
+                      <td className="text-text-primary font-medium">Plain-language explanations</td>
+                      <td className="text-center text-success">Working</td>
+                      <td className="text-text-secondary">Rule-based, factor by factor — no language model in the path</td>
                     </tr>
                     <tr>
-                      <td className="text-text-primary font-medium">AI Explanations</td>
-                      <td className="text-center text-success">✓</td>
-                      <td className="text-center text-success">✓</td>
-                      <td className="text-center text-success">✓</td>
-                      <td className="text-center text-success">✓</td>
-                      <td className="text-center text-success">✓</td>
+                      <td className="text-text-primary font-medium">Custom risk profiles</td>
+                      <td className="text-center text-success">Working</td>
+                      <td className="text-text-secondary">Define your own thresholds in-browser; server clamps them</td>
                     </tr>
                     <tr>
-                      <td className="text-text-primary font-medium">Portfolio Tracking</td>
-                      <td className="text-center text-text-muted">—</td>
-                      <td className="text-center text-success">✓</td>
-                      <td className="text-center text-success">✓</td>
-                      <td className="text-center text-success">✓</td>
-                      <td className="text-center text-success">✓</td>
+                      <td className="text-text-primary font-medium">Historical backtest</td>
+                      <td className="text-center text-success">Working</td>
+                      <td className="text-text-secondary">Real SoDEX daily closes replayed through the live scoring pipeline</td>
                     </tr>
                     <tr>
-                      <td className="text-text-primary font-medium">Real-time Alerts</td>
-                      <td className="text-center text-text-muted">—</td>
-                      <td className="text-center text-success">✓</td>
-                      <td className="text-center text-success">✓</td>
-                      <td className="text-center text-success">✓</td>
-                      <td className="text-center text-success">✓</td>
+                      <td className="text-text-primary font-medium">PDF / clipboard export</td>
+                      <td className="text-center text-success">Working</td>
+                      <td className="text-text-secondary">Uses the browser print dialog</td>
                     </tr>
                     <tr>
-                      <td className="text-text-primary font-medium">API Access</td>
-                      <td className="text-center text-text-muted">—</td>
-                      <td className="text-center text-text-muted">—</td>
-                      <td className="text-center text-success">1K/mo</td>
-                      <td className="text-center text-success">10K/mo</td>
-                      <td className="text-center text-success">Unlimited</td>
+                      <td className="text-text-primary font-medium">Dashboard &amp; watchlist</td>
+                      <td className="text-center text-success">Working</td>
+                      <td className="text-text-secondary">Browser-local only — nothing is uploaded or synced</td>
                     </tr>
                     <tr>
-                      <td className="text-text-primary font-medium">Custom Risk Models</td>
-                      <td className="text-center text-text-muted">—</td>
-                      <td className="text-center text-text-muted">—</td>
-                      <td className="text-center text-success">✓</td>
-                      <td className="text-center text-success">✓</td>
-                      <td className="text-center text-success">✓</td>
+                      <td className="text-text-primary font-medium">REST endpoints</td>
+                      <td className="text-center text-success">Working</td>
+                      <td className="text-text-secondary">Unauthenticated and unmetered — needs auth/rate limiting before public exposure</td>
                     </tr>
                     <tr>
-                      <td className="text-text-primary font-medium">Webhook Integrations</td>
-                      <td className="text-center text-text-muted">—</td>
-                      <td className="text-center text-text-muted">—</td>
-                      <td className="text-center text-success">✓</td>
-                      <td className="text-center text-success">✓</td>
-                      <td className="text-center text-success">✓</td>
+                      <td className="text-text-primary font-medium">Signed order placement</td>
+                      <td className="text-center text-warning">Testnet only</td>
+                      <td className="text-text-secondary">SoDEX testnet. Mainnet execution is not implemented and is blocked server-side</td>
                     </tr>
                     <tr>
-                      <td className="text-text-primary font-medium">White-label Options</td>
-                      <td className="text-center text-text-muted">—</td>
-                      <td className="text-center text-text-muted">—</td>
-                      <td className="text-center text-text-muted">—</td>
-                      <td className="text-center text-success">✓</td>
-                      <td className="text-center text-success">✓</td>
+                      <td className="text-text-primary font-medium">Accounts &amp; billing</td>
+                      <td className="text-center text-text-muted">Not built</td>
+                      <td className="text-text-secondary">No signup, no payment, no plan enforcement</td>
                     </tr>
                     <tr>
-                      <td className="text-text-primary font-medium">On-premise Deployment</td>
-                      <td className="text-center text-text-muted">—</td>
-                      <td className="text-center text-text-muted">—</td>
-                      <td className="text-center text-text-muted">—</td>
-                      <td className="text-center text-text-muted">—</td>
-                      <td className="text-center text-success">✓</td>
+                      <td className="text-text-primary font-medium">Rate limiting &amp; per-user quotas</td>
+                      <td className="text-center text-text-muted">Not built</td>
+                      <td className="text-text-secondary">Every request consumes the deployment&apos;s upstream quota</td>
                     </tr>
                     <tr>
-                      <td className="text-text-primary font-medium">Support Level</td>
-                      <td className="text-center text-text-secondary">Community</td>
-                      <td className="text-center text-text-secondary">Email</td>
-                      <td className="text-center text-text-secondary">Priority</td>
-                      <td className="text-center text-text-secondary">Priority</td>
-                      <td className="text-center text-text-secondary">Dedicated</td>
+                      <td className="text-text-primary font-medium">Portfolio tracking</td>
+                      <td className="text-center text-text-muted">Not built</td>
+                      <td className="text-text-secondary">No position state — the engine scores one proposed trade at a time</td>
+                    </tr>
+                    <tr>
+                      <td className="text-text-primary font-medium">Real-time alerts / webhooks</td>
+                      <td className="text-center text-text-muted">Not built</td>
+                      <td className="text-text-secondary">Analysis runs on demand; nothing pushes</td>
+                    </tr>
+                    <tr>
+                      <td className="text-text-primary font-medium">Telegram / Discord bots</td>
+                      <td className="text-center text-text-muted">Not built</td>
+                      <td className="text-text-secondary">Callable via the REST endpoints, but no bot ships</td>
+                    </tr>
+                    <tr>
+                      <td className="text-text-primary font-medium">White-label / on-premise</td>
+                      <td className="text-center text-text-muted">Not built</td>
+                      <td className="text-text-secondary">No theming layer, no deployment tooling</td>
                     </tr>
                   </tbody>
                 </table>
@@ -415,8 +396,13 @@ export default function PricingPage() {
 
         {/* Use Cases */}
         <div className="mb-16">
-          <h2 className="text-section-heading mb-12 text-center">Choose Based on Your Use Case</h2>
-          
+          <h2 className="text-section-heading mb-4 text-center">Who This Is Intended For</h2>
+          <p className="text-body max-w-3xl mx-auto text-center mb-12 leading-relaxed">
+            Positioning for the tiers above. Several capabilities named here — portfolio tracking, alerts, bot
+            integrations, white-label, on-premise, compliance reporting — are not built yet; the status table above is
+            the authoritative list of what exists.
+          </p>
+
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
             <Card className="terminal-card">
               <CardHeader>
@@ -543,25 +529,20 @@ export default function PricingPage() {
               <div>
                 <h3 className="text-card-heading mb-2">How accurate are the risk scores?</h3>
                 <p className="text-body">
-                  Our risk scores are based on multiple market data sources, volatility analysis, sentiment tracking, 
-                  and AI models trained on historical market behavior. While no system is perfect, our models 
-                  have shown strong correlation with actual trade outcomes.
+                  Scores come from a transparent weighted model over live market data: volatility, trend, sentiment,
+                  volume, liquidity, execution, sector, macro, position size and holding period. No model is trained and
+                  no output is generated by a language model — every factor and its weight is published with each
+                  report, and the /validate page replays real historical prices through the same scoring pipeline so you
+                  can see the false-positive rate for yourself.
                 </p>
               </div>
               
               <div>
-                <h3 className="text-card-heading mb-2">Can I cancel anytime?</h3>
+                <h3 className="text-card-heading mb-2">Can I cancel anytime? Do you offer refunds?</h3>
                 <p className="text-body">
-                  Yes, all plans can be canceled at any time. You&apos;ll retain access until the end of your billing period,
-                  and we don&apos;t charge cancellation fees.
-                </p>
-              </div>
-              
-              <div>
-                <h3 className="text-card-heading mb-2">Do you offer refunds?</h3>
-                <p className="text-body">
-                  We offer a 7-day money-back guarantee for all paid plans. If you&apos;re not satisfied,
-                  contact support for a full refund.
+                  Not applicable yet — there is nothing to cancel. No plan is for sale and no payment is processed
+                  anywhere in this app, so there is no subscription to cancel, no renewal, and no refund policy. When
+                  billing is actually built out, this is where the cancellation and refund terms will be published.
                 </p>
               </div>
             </div>
@@ -570,9 +551,9 @@ export default function PricingPage() {
               <div>
                 <h3 className="text-card-heading mb-2">What data sources do you use?</h3>
                 <p className="text-body">
-                  We integrate with multiple market data providers, social sentiment APIs, on-chain analytics, 
-                  and news sources to provide comprehensive risk analysis. Data sources include SoSoValue, 
-                  CoinGecko, and other institutional-grade providers.
+                  Two live providers: SoSoValue for market intelligence (price, trend, news sentiment, volume, sector,
+                  macro risk context) and SoDEX for market microstructure (orderbook, liquidity, spread, slippage and
+                  execution preview). Both are queried per analysis, and every report lists the exact endpoints used.
                 </p>
               </div>
               
@@ -600,23 +581,25 @@ export default function PricingPage() {
         <div className="text-center bg-surface rounded-2xl p-12">
           <h2 className="text-section-heading mb-6">Ready to Start?</h2>
           <p className="text-xl text-body mb-8 max-w-2xl mx-auto leading-relaxed">
-            Join thousands of traders using TradeFirewall to make safer, more informed trading decisions.
+            TradeFirewall is a pre-launch buildathon project. The tiers below are the intended packaging, not a live
+            subscription: nothing on this page is for sale, no payment is processed, and no account or billing exists
+            yet. Every feature listed is usable today, without an upgrade.
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
             <Link href="/check-trade">
               <Button className="btn-primary px-8 py-3 text-base">
-                Start Free Trial
+                Run a live analysis
               </Button>
             </Link>
             <Link href="/api">
               <Button className="btn-secondary px-8 py-3 text-base">
-                View API Docs
+                Read the API reference
               </Button>
             </Link>
           </div>
         </div>
 
-      </div>
+      </main>
     </div>
   );
 }

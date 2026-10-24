@@ -7,6 +7,15 @@ export interface RiskReportData {
   amount: number;
   holdingPeriod: string;
   riskProfile: string;
+  /** Exact thresholds used, always populated when the engine resolved the profile. */
+  riskProfileConfig?: {
+    approve: number;
+    caution: number;
+    reduce: number;
+    positionToleranceUsd: number;
+  };
+  /** True if the profile was supplied as a custom definition (or fell back after unknown name). */
+  riskProfileIsCustom?: boolean;
   riskScore: number;
   decision: string;
   riskFactors: Record<string, number>;
@@ -265,7 +274,7 @@ class PDFGenerator {
             </div>
             <div class="detail-row">
                 <span class="detail-label">Risk Profile:</span>
-                <span class="detail-value">${data.riskProfile}</span>
+                <span class="detail-value">${data.riskProfile}${data.riskProfileIsCustom ? ' (custom)' : ''}</span>
             </div>
         </div>
     </div>
@@ -399,7 +408,10 @@ Asset: ${data.symbol}
 Action: ${data.action.toUpperCase()}
 Amount: $${data.amount.toLocaleString()}
 Holding Period: ${data.holdingPeriod}
-Risk Profile: ${data.riskProfile}
+Risk Profile: ${data.riskProfile}${data.riskProfileIsCustom ? ' (custom)' : ''}
+Thresholds (approve/caution/reduce): ${
+  data.riskProfileConfig ? `${data.riskProfileConfig.approve}/${data.riskProfileConfig.caution}/${data.riskProfileConfig.reduce}, tolerance $${data.riskProfileConfig.positionToleranceUsd.toLocaleString()}` : 'built-in'
+}
 
 Risk Score: ${data.riskScore}/100
 Decision: ${data.decision.replace('_', ' ')}

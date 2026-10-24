@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { SiteNav } from '@/components/SiteNav';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
@@ -16,33 +17,16 @@ export default function Home() {
       </div>
 
       {/* Navigation */}
-      <nav className="terminal-navbar sticky top-0 z-50 backdrop-blur-sm">
-        <div className="max-w-6xl mx-auto px-4 h-full flex items-center justify-between">
-          <div className="flex items-center space-x-12">
-            <Link href="/" className="logo-text text-xl">
-              tradefirewall<span className="logo-underscore">_</span>
-            </Link>
-            
-            <div className="hidden md:flex items-center space-x-8">
-              <Link href="/product" className="text-text-secondary hover:text-text-primary transition-colors text-sm">
-                Product
-              </Link>
-              <Link href="/check-trade" className="text-text-secondary hover:text-text-primary transition-colors text-sm">
-                Risk Engine
-              </Link>
-              <Link href="/pricing" className="text-text-secondary hover:text-text-primary transition-colors text-sm">
-                Pricing
-              </Link>
-              <Link href="/resources" className="text-text-secondary hover:text-text-primary transition-colors text-sm">
-                Resources
-              </Link>
-              <Link href="/about" className="text-text-secondary hover:text-text-primary transition-colors text-sm">
-                About
-              </Link>
-            </div>
-          </div>
-          
-          <div className="flex items-center space-x-4">
+      <SiteNav
+        containerClassName="max-w-6xl"
+        links={[
+          { href: '/check-trade', label: 'Risk Engine' },
+          { href: '/validate', label: 'Validation' },
+          { href: '/pricing', label: 'Pricing' },
+          { href: '/dashboard', label: 'Dashboard' },
+        ]}
+        actions={
+          <>
             <Link href="/api" className="text-text-secondary hover:text-text-primary transition-colors text-sm">
               API
             </Link>
@@ -51,10 +35,11 @@ export default function Home() {
                 Go to App
               </Button>
             </Link>
-          </div>
-        </div>
-      </nav>
+          </>
+        }
+      />
 
+      <main>
       {/* Hero Section */}
       <section className="py-24 px-4">
         <div className="max-w-6xl mx-auto">
@@ -73,7 +58,7 @@ export default function Home() {
               </div>
               
               <p className="text-xl text-body max-w-lg leading-relaxed">
-                TradeFirewall transforms market data into institutional-grade risk intelligence. 
+                TradeFirewall turns live market data into a transparent, rule-based risk score.
                 Analyze proposed trades, detect hidden danger, and add confirmation controls before execution.
               </p>
               
@@ -83,9 +68,9 @@ export default function Home() {
                     Go to Risk Engine
                   </Button>
                 </Link>
-                <Link href="/check-trade">
+                <Link href="/validate">
                   <Button className="btn-secondary px-8 py-3 text-base">
-                    View Demo
+                    See the Backtest
                   </Button>
                 </Link>
               </div>
@@ -112,7 +97,7 @@ export default function Home() {
                     
                     <div className="p-4 bg-surface rounded-lg">
                       <div className="text-sm font-medium text-text-primary mb-2">2. Market Data Analysis</div>
-                      <div className="text-xs text-text-secondary">Real-time volatility, sentiment, volume, liquidity data</div>
+                      <div className="text-xs text-text-secondary">Volatility from daily klines, plus news sentiment, volume, and order-book liquidity</div>
                     </div>
                     
                     <div className="p-4 bg-surface rounded-lg">
@@ -144,17 +129,20 @@ export default function Home() {
         </div>
       </section>
 
-      {/* Trusted By Section */}
+      {/* Who this is for — no customer claims */}
       <section className="py-16 border-t border-border">
         <div className="max-w-6xl mx-auto px-4">
           <div className="text-center mb-12">
-            <h2 className="text-lg font-medium text-text-secondary mb-8">
-              Trusted by risk-aware traders and builders
+            <h2 className="text-lg font-medium text-text-secondary mb-4">
+              Built for anyone deciding whether to take a trade
             </h2>
+            <p className="text-body max-w-2xl mx-auto mb-8">
+              TradeFirewall is a pre-launch buildathon project with no customers yet. It is designed for the cases below.
+            </p>
             <div className="flex flex-wrap justify-center gap-4">
               {[
                 'Signal Groups',
-                'DeFi Apps', 
+                'DeFi Apps',
                 'Wallets',
                 'Trading Bots',
                 'Fund Managers',
@@ -162,7 +150,7 @@ export default function Home() {
                 'DAO Treasuries',
                 'Market Analysts'
               ].map((item) => (
-                <div key={item} className="trusted-pill">
+                <div key={item} className="audience-pill">
                   {item}
                 </div>
               ))}
@@ -216,7 +204,7 @@ export default function Home() {
                 </div>
                 <h3 className="text-card-heading">Data you can act on</h3>
                 <p className="text-body">
-                  Users get a clear decision: Approve, Caution, Reduce, Wait, or Block.
+                  Users get one of four decisions: Approve, Caution, Reduce / Wait, or Block.
                 </p>
               </CardContent>
             </Card>
@@ -246,9 +234,9 @@ export default function Home() {
                 icon: '📋'
               },
               {
-                title: 'Risk Intelligence Explanation',
-                description: 'Explain the risk in simple language.',
-                icon: '🤖'
+                title: 'Risk Explanation',
+                description: 'Explain the risk in plain language, factor by factor.',
+                icon: '📝'
               },
               {
                 title: 'Confirmation Gate',
@@ -257,12 +245,12 @@ export default function Home() {
               },
               {
                 title: 'API',
-                description: 'Let wallets, bots, and DeFi apps call TradeFirewall risk checks.',
+                description: 'Score a proposed trade over HTTP. No auth or rate limiting yet — read the reference for limits.',
                 icon: '🔌'
               },
               {
                 title: 'Dashboard',
-                description: 'Track recent checks, blocked trades, alerts, and simulated losses avoided.',
+                description: 'Track recent checks, blocked trades, risk alerts, and a watchlist.',
                 icon: '📈'
               }
             ].map((product, index) => (
@@ -283,7 +271,7 @@ export default function Home() {
         <div className="max-w-4xl mx-auto text-center px-4 space-y-8">
           <h2 className="text-section-heading">Ready to add risk intelligence to your trades?</h2>
           <p className="text-xl text-body leading-relaxed">
-            Join traders and builders using TradeFirewall to make safer decisions.
+            Run an analysis against live market data and see exactly which factors drive the decision.
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
             <Link href="/check-trade">
@@ -299,6 +287,7 @@ export default function Home() {
           </div>
         </div>
       </section>
+      </main>
 
       {/* Footer */}
       <footer className="bg-background border-t border-border py-16">
@@ -314,45 +303,32 @@ export default function Home() {
             </div>
             
             <div className="space-y-4">
-              <h3 className="text-card-heading">Company</h3>
-              <ul className="space-y-2">
-                <li><a href="#" className="text-body hover:text-text-primary transition-colors">About</a></li>
-                <li><a href="#" className="text-body hover:text-text-primary transition-colors">Contact</a></li>
-                <li><Link href="/pricing" className="text-body hover:text-text-primary transition-colors">Pricing</Link></li>
-                <li><a href="#" className="text-body hover:text-text-primary transition-colors">Privacy Policy</a></li>
-              </ul>
-            </div>
-            
-            <div className="space-y-4">
               <h3 className="text-card-heading">Product</h3>
               <ul className="space-y-2">
                 <li><Link href="/check-trade" className="text-body hover:text-text-primary transition-colors">Risk Engine</Link></li>
                 <li><Link href="/dashboard" className="text-body hover:text-text-primary transition-colors">Dashboard</Link></li>
-                <li><Link href="/api" className="text-body hover:text-text-primary transition-colors">API</Link></li>
-                <li><a href="#" className="text-body hover:text-text-primary transition-colors">Confirmation Gate</a></li>
+                <li><Link href="/api" className="text-body hover:text-text-primary transition-colors">API Reference</Link></li>
+                <li><Link href="/check-trade" className="text-body hover:text-text-primary transition-colors">Confirmation Gate</Link></li>
               </ul>
             </div>
             
             <div className="space-y-4">
               <h3 className="text-card-heading">Resources</h3>
               <ul className="space-y-2">
-                <li><a href="#" className="text-body hover:text-text-primary transition-colors">Docs</a></li>
-                <li><a href="#" className="text-body hover:text-text-primary transition-colors">Blog</a></li>
-                <li><a href="#" className="text-body hover:text-text-primary transition-colors">Demo</a></li>
-                <li><a href="#" className="text-body hover:text-text-primary transition-colors">GitHub</a></li>
+                <li><Link href="/api" className="text-body hover:text-text-primary transition-colors">API Reference</Link></li>
+                <li><Link href="/validate" className="text-body hover:text-text-primary transition-colors">Validation &amp; Backtest</Link></li>
+                <li><Link href="/check-trade" className="text-body hover:text-text-primary transition-colors">Try It Live</Link></li>
               </ul>
             </div>
           </div>
           
           <div className="border-t border-border mt-12 pt-8 flex flex-col md:flex-row justify-between items-center">
             <p className="text-body text-sm">
-              &copy; 2026 TradeFirewall. Built for SoSoValue Buildathon.
+              &copy; 2026 TradeFirewall. Built for SoSoValue Buildathon. Not financial advice.
             </p>
-            <div className="flex items-center space-x-6 mt-4 md:mt-0">
-              <a href="#" className="text-body hover:text-text-primary transition-colors text-sm">X</a>
-              <a href="#" className="text-body hover:text-text-primary transition-colors text-sm">Discord</a>
-              <a href="#" className="text-body hover:text-text-primary transition-colors text-sm">Telegram</a>
-            </div>
+            <p className="text-text-muted text-sm mt-4 md:mt-0">
+              All saved data stays in your browser. Nothing is uploaded.
+            </p>
           </div>
         </div>
       </footer>

@@ -2,6 +2,13 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import {
+  FACTOR_BAND_BADGE_CLASS,
+  FACTOR_BAND_BAR_CLASS,
+  FACTOR_BAND_LABEL,
+  factorBand,
+} from '@/lib/riskBand';
 
 interface RiskFactorsListProps {
   reasons: string[];
@@ -10,46 +17,9 @@ interface RiskFactorsListProps {
   decision?: string;
 }
 
-const FACTOR_LABELS: Record<string, string> = {
-  volatility: 'Volatility',
-  sentiment: 'Sentiment',
-  volume: 'Volume',
-  trend: 'Trend',
-  liquidity: 'Liquidity',
-  execution: 'Execution',
-  sector: 'Sector',
-  macro: 'Macro',
-  positionSize: 'Position Size',
-  holdingPeriod: 'Holding Period',
-};
-
-const FACTOR_DESCRIPTIONS: Record<string, string> = {
-  volatility: 'Price swing intensity from recent klines',
-  sentiment: 'News & social mood around this asset',
-  volume: 'Trading volume vs. recent averages',
-  trend: 'Price momentum relative to your trade direction',
-  liquidity: 'Order book depth vs. your trade size',
-  execution: 'Estimated slippage, fees, and fill probability',
-  sector: 'Sector performance and relative strength',
-  macro: 'Broad market risk factors and contextual warnings',
-  positionSize: 'Your trade size vs. your risk profile threshold',
-  holdingPeriod: 'Timing risk amplified by volatility',
-};
+import { FACTOR_LABELS, FACTOR_DESCRIPTIONS } from '@/lib/factorLabels';
 
 export function RiskFactorsList({ reasons, marketFactors, factorWeights, decision }: RiskFactorsListProps) {
-  const getBadge = (value: number) => {
-    if (value >= 70) return { cls: 'bg-danger text-white', label: 'High Risk' };
-    if (value >= 50) return { cls: 'bg-orange-risk text-white', label: 'Medium Risk' };
-    if (value >= 30) return { cls: 'bg-warning text-background', label: 'Low Risk' };
-    return { cls: 'bg-success text-background', label: 'Minimal' };
-  };
-
-  const getBarColor = (value: number) => {
-    if (value >= 70) return 'bg-danger';
-    if (value >= 50) return 'bg-orange-risk';
-    if (value >= 30) return 'bg-warning';
-    return 'bg-success';
-  };
 
   // Top contributors = factors with score >= 60, sorted descending by weighted impact
   const topContributors = Object.entries(marketFactors)
@@ -60,7 +30,8 @@ export function RiskFactorsList({ reasons, marketFactors, factorWeights, decisio
   const isBlocked = decision === 'BLOCK' || decision === 'REDUCE_OR_WAIT';
 
   return (
-    <div className="space-y-6">
+    <TooltipProvider>
+      <div className="space-y-6">
       {/* Why this trade was blocked / reduced callout */}
       {isBlocked && topContributors.length > 0 && (
         <Card className="terminal-card border-danger/40">
@@ -123,13 +94,22 @@ export function RiskFactorsList({ reasons, marketFactors, factorWeights, decisio
                 return wb * b[1] - wa * a[1];
               })
               .map(([factor, value]) => {
-                const { cls, label } = getBadge(value);
+                const band = factorBand(value);
+                const cls = FACTOR_BAND_BADGE_CLASS[band];
+                const label = FACTOR_BAND_LABEL[band];
                 const weight = factorWeights?.[factor];
                 return (
                   <div key={factor} className="space-y-1.5">
                     <div className="flex items-center justify-between text-sm">
                       <div className="flex items-center gap-2">
-                        <span className="font-medium text-text-primary">{FACTOR_LABELS[factor] ?? factor}</span>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="font-medium text-text-primary cursor-help border-b border-dotted border-text-secondary">{FACTOR_LABELS[factor] ?? factor}</span>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p className="max-w-xs">{FACTOR_DESCRIPTIONS[factor]}</p>
+                          </TooltipContent>
+                        </Tooltip>
                         {weight !== undefined && (
                           <span className="text-xs text-text-secondary bg-surface px-1.5 py-0.5 rounded">
                             {Math.round(weight * 100)}% weight
@@ -143,11 +123,10 @@ export function RiskFactorsList({ reasons, marketFactors, factorWeights, decisio
                     </div>
                     <div className="w-full bg-surface rounded-full h-1.5 overflow-hidden">
                       <div
-                        className={`h-1.5 rounded-full transition-all duration-500 ${getBarColor(value)}`}
+                        className={`h-1.5 rounded-full transition-all duration-500 ${FACTOR_BAND_BAR_CLASS[band]}`}
                         style={{ width: `${value}%` }}
                       />
                     </div>
-                    <p className="text-xs text-text-secondary">{FACTOR_DESCRIPTIONS[factor]}</p>
                   </div>
                 );
               })}
@@ -155,5 +134,6 @@ export function RiskFactorsList({ reasons, marketFactors, factorWeights, decisio
         </CardContent>
       </Card>
     </div>
+    </TooltipProvider>
   );
 }

@@ -61,6 +61,17 @@ export interface SoSoRiskContext {
 export interface SoSoFetchMeta {
   endpoints: string[];
   fetchedAtMs: number;
+  /**
+   * Factors whose upstream input came back empty, so the engine substitutes a neutral or
+   * synthetic value rather than a measured one.
+   *
+   * This exists because every block below is a non-optional object: an empty news list still
+   * yields `sentiment: 'neutral', score: 0`, which `calculateSentimentRisk` turns into a
+   * confident-looking 40. Nothing downstream could tell that apart from a real measurement, and
+   * the UI went on to claim every factor was scored on real data. Empty means every input had
+   * data.
+   */
+  degradedInputs: string[];
 }
 
 export interface SoSoMarketIntelligence {
@@ -77,6 +88,31 @@ export class APIConnectionError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'APIConnectionError';
+  }
+}
+
+/**
+ * A non-2xx response from the provider. Carries the status so callers can distinguish a 429
+ * (retry later) from, say, a 403 (credentials) without re-parsing the message string.
+ */
+export class SoSoValueHttpError extends Error {
+  readonly status: number;
+  constructor(status: number, statusText: string) {
+    super(`SoSoValue HTTP ${status}: ${statusText}`);
+    this.name = 'SoSoValueHttpError';
+    this.status = status;
+  }
+}
+
+/**
+ * The provider did not respond inside the deadline. Without this the request could hang
+ * indefinitely and the user was left staring at a spinner with a disabled submit button and no
+ * way out but reloading the page.
+ */
+export class SoSoValueTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`SoSoValue request timed out after ${timeoutMs}ms`);
+    this.name = 'SoSoValueTimeoutError';
   }
 }
 
@@ -100,6 +136,8 @@ class SoSoValueAPI {
   private readonly baseUrl: string;
   private currencyCache: { at: number; rows: CurrencyRow[] } | null = null;
   private static readonly LIST_TTL_MS = 60 * 60 * 1000;
+  /** Per-request budget, matching the SoDEX client's. */
+  private static readonly REQUEST_TIMEOUT_MS = 8000;
 
   constructor() {
     this.baseUrl =
@@ -143,17 +181,34 @@ class SoSoValueAPI {
     if (query) {
       Object.entries(query).forEach(([k, v]) => url.searchParams.set(k, v));
     }
-    const response = await fetch(url.toString(), {
-      headers: {
-        'x-soso-api-key': key,
-        Accept: 'application/json',
-      },
-      next: { revalidate: 0 },
-    });
-    if (!response.ok) {
-      throw new Error(`SoSoValue HTTP ${response.status}: ${response.statusText}`);
+    // Matches the SoDEX client's 8s budget. SoSoValue had no timeout at all, so a stalled
+    // upstream held the request open forever.
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), SoSoValueAPI.REQUEST_TIMEOUT_MS);
+    try {
+      const response = await fetch(url.toString(), {
+        headers: {
+          'x-soso-api-key': key,
+          Accept: 'application/json',
+        },
+        signal: controller.signal,
+        next: { revalidate: 0 },
+      });
+      if (!response.ok) {
+        throw new SoSoValueHttpError(response.status, response.statusText);
+      }
+      return response.json();
+    } catch (error) {
+      if (error instanceof SoSoValueHttpError) throw error;
+      // A single fetch times out, not the whole analysis: the engine degrades this factor to
+      // neutral and keeps the factors that did resolve.
+      if (controller.signal.aborted) {
+        throw new SoSoValueTimeoutError(SoSoValueAPI.REQUEST_TIMEOUT_MS);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout);
     }
-    return response.json();
   }
 
   private async getCurrencyRows(): Promise<CurrencyRow[]> {
@@ -206,7 +261,8 @@ class SoSoValueAPI {
   }
 
   private buildRiskContext(symbol: string, snap: MarketSnapshot, klines: KlineRow[]): SoSoRiskContext {
-    const change = this.num(snap.change_pct_24h);
+    // API returns decimals (e.g. 0.0113 = 1.13%) — convert to percentage
+    const change = this.num(snap.change_pct_24h) * 100;
     const turnoverRate = this.num(snap.turnover_rate);
     const downAth = snap && typeof snap === 'object' && 'down_from_ath' in snap ? String((snap as { down_from_ath?: string }).down_from_ath || '') : '';
     const factors: string[] = [];
@@ -307,7 +363,9 @@ class SoSoValueAPI {
         : [];
 
     const price = this.num(snap.price);
-    const change24h = this.num(snap.change_pct_24h);
+    // API returns change_pct_24h as a decimal fraction (e.g. 0.0113 = 1.13%)
+    const change24hRaw = this.num(snap.change_pct_24h);
+    const change24h = change24hRaw * 100; // Convert to percentage for UI/scoring
     const volume24h = this.num(snap.turnover_24h);
     const marketCap = this.num(snap.marketcap);
     const trend: SoSoMarketSummary['trend'] =
@@ -395,8 +453,8 @@ class SoSoValueAPI {
 
     const primarySector = info.sector?.[0]?.name || 'unknown';
     const sectorMatch = sectorList.find((s) => s.name?.toLowerCase() === primarySector.toLowerCase());
-    // 24h_change_pct is already a percentage (e.g. 2.5 = 2.5%), no ×100 conversion needed
-    const sectorPerformance = this.num(sectorMatch?.['24h_change_pct']);
+    // sector change_pct_24h is also a decimal fraction — convert to percentage
+    const sectorPerformance = this.num(sectorMatch?.['24h_change_pct']) * 100;
     const sectorTrend: SoSoSectorData['sectorTrend'] =
       sectorPerformance > 0.5 ? 'bullish' : sectorPerformance < -0.5 ? 'bearish' : 'neutral';
 
@@ -414,6 +472,15 @@ class SoSoValueAPI {
 
     const riskContext = this.buildRiskContext(symbol.toUpperCase(), snap, klineList);
 
+    // Record which inputs were empty while the raw values are still in scope. Each of these
+    // produces a plausible-looking factor score that is not a measurement.
+    const degradedInputs: string[] = [];
+    // Fewer than 3 closes means fewer than 2 returns, so the volatility stdev guard returns a
+    // neutral estimate rather than a measured deviation.
+    if (closes.length < 3) degradedInputs.push('volatility');
+    if (headlines.length === 0) degradedInputs.push('sentiment');
+    if (primarySector === 'unknown') degradedInputs.push('sector');
+
     return {
       marketSummary,
       assetTrend,
@@ -421,7 +488,7 @@ class SoSoValueAPI {
       volumeData,
       sectorData,
       riskContext,
-      meta: { endpoints, fetchedAtMs: t0 },
+      meta: { endpoints, fetchedAtMs: t0, degradedInputs },
     };
   }
 

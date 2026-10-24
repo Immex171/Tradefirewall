@@ -2,10 +2,13 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { SiteNav } from '@/components/SiteNav';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { storageManager, WatchlistItem, SavedReport } from '@/lib/storage';
+import { isHighRisk, riskBand, type RiskBand } from '@/lib/riskBand';
+import { toTradeCheckRows, type TradeCheckRow } from '@/lib/tradeCheckRow';
 import { toast } from '@/lib/toast';
 
 // Types for real data
@@ -19,26 +22,11 @@ interface DashboardMetrics {
   tradesChecked: number;
 }
 
-interface TradeCheck {
-  id: string;
-  time: string;
-  asset: string;
-  action: string;
-  amount: string;
-  holdingPeriod: string;
-  riskScore: number;
-  decision: string;
-  recommendedAction: string;
-  status: string;
-  timestamp: number;
-}
-
 interface RiskAlert {
   id: string;
   message: string;
   severity: 'high' | 'medium';
   time: string;
-  timestamp: number;
 }
 
 function calculateMetricsFromReports(reports: SavedReport[]): DashboardMetrics {
@@ -65,7 +53,7 @@ function calculateMetricsFromReports(reports: SavedReport[]): DashboardMetrics {
     blockedReports.reduce((sum, report) => sum + (Number(report.amount) || 0), 0)
   );
 
-  const highRiskAlerts = reports.filter(report => report.riskScore >= 70).length;
+  const highRiskAlerts = reports.filter((report) => isHighRisk(report.riskScore)).length;
 
   return {
     averageRiskScore,
@@ -79,7 +67,7 @@ function calculateMetricsFromReports(reports: SavedReport[]): DashboardMetrics {
 
 export default function DashboardPage() {
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
-  const [recentTradeChecks, setRecentTradeChecks] = useState<TradeCheck[]>([]);
+  const [recentTradeChecks, setRecentTradeChecks] = useState<TradeCheckRow[]>([]);
   const [alerts, setAlerts] = useState<RiskAlert[]>([]);
   const [watchlist, setWatchlist] = useState<WatchlistItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -93,25 +81,21 @@ export default function DashboardPage() {
         }
         setError(null);
 
-        // Load real data from localStorage using storageManager
-        const savedReports = storageManager.getReports();
-        const savedWatchlist = storageManager.getWatchlist();
+        // Load real data from localStorage using storageManager (guarded against SSR)
+        let savedReports: Awaited<ReturnType<typeof storageManager.getReports>> = [];
+        let savedWatchlist: Awaited<ReturnType<typeof storageManager.getWatchlist>> = [];
+        if (typeof window !== 'undefined') {
+          try {
+            savedReports = storageManager.getReports();
+            savedWatchlist = storageManager.getWatchlist();
+          } catch (e) {
+            console.warn('Failed to load localStorage data:', e);
+          }
+        }
 
         if (savedReports.length > 0) {
           // Newest-first in storage (unshift); show latest checks at the top
-          setRecentTradeChecks(savedReports.slice(0, 10).map(report => ({
-            id: report.id,
-            time: new Date(report.createdAt).toLocaleDateString(),
-            asset: report.symbol,
-            action: report.action,
-            amount: `$${report.amount.toLocaleString()}`,
-            holdingPeriod: report.holdingPeriod,
-            riskScore: report.riskScore,
-            decision: report.decision,
-            recommendedAction: report.recommendedAction,
-            status: report.status || 'completed',
-            timestamp: report.createdAt
-          })));
+          setRecentTradeChecks(toTradeCheckRows(savedReports, 10));
           
           // Calculate real metrics from saved data
           const calculatedMetrics = calculateMetricsFromReports(savedReports);
@@ -132,13 +116,12 @@ export default function DashboardPage() {
         setWatchlist(savedWatchlist);
 
         // Generate alerts based on recent high-risk reports
-        const highRiskReports = savedReports.filter(r => r.riskScore >= 70);
+        const highRiskReports = savedReports.filter(r => isHighRisk(r.riskScore));
         const generatedAlerts = highRiskReports.slice(0, 5).map(report => ({
           id: `alert_${report.id}`,
           message: `High risk detected for ${report.symbol} trade (${report.riskScore}/100)`,
-          severity: report.riskScore >= 85 ? 'high' as const : 'medium' as const,
-          time: new Date(report.createdAt).toLocaleDateString(),
-          timestamp: report.createdAt
+          severity: riskBand(report.riskScore) === 'critical' ? 'high' as const : 'medium' as const,
+          time: new Date(report.createdAt).toLocaleDateString()
         }));
         setAlerts(generatedAlerts);
 
@@ -163,6 +146,43 @@ export default function DashboardPage() {
     };
   }, []);
 
+  const downloadFile = (content: string, filename: string, mime: string) => {
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    // Revoke on the next tick — revoking synchronously after click() races the
+    // download start in some browsers and cancels it.
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  };
+
+  const exportFilename = (ext: 'json' | 'csv') =>
+    `tradefirewall-reports-${new Date().toISOString().split('T')[0]}.${ext}`;
+
+  const handleExportJSON = () => {
+    const data = storageManager.exportData();
+    if (!data) {
+      toast.error('No data to export.');
+      return;
+    }
+    downloadFile(data, exportFilename('json'), 'application/json');
+    toast.success('Reports exported successfully.');
+  };
+
+  const handleExportCSV = () => {
+    const csvData = storageManager.exportReportsToCSV();
+    if (!csvData) {
+      toast.error('No reports to export.');
+      return;
+    }
+    downloadFile(csvData, exportFilename('csv'), 'text/csv');
+    toast.success('CSV exported successfully.');
+  };
+
   const getDecisionBadge = (decision: string) => {
     const variants = {
       'APPROVE': 'bg-success text-background',
@@ -179,25 +199,20 @@ export default function DashboardPage() {
   if (isLoading) {
     return (
       <div className="min-h-screen bg-background">
-        <nav className="terminal-navbar sticky top-0 z-50 backdrop-blur-sm">
-          <div className="max-w-7xl mx-auto px-4 h-full flex items-center justify-between">
-            <Link href="/" className="logo-text text-xl">
-              tradefirewall<span className="logo-underscore">_</span>
+        <SiteNav
+          actions={
+            <Link href="/check-trade">
+              <Button className="btn-primary px-4 py-2 text-sm">Check New Trade</Button>
             </Link>
-            <div className="flex items-center space-x-4">
-              <Link href="/check-trade">
-                <Button className="btn-primary px-4 py-2 text-sm">Check New Trade</Button>
-              </Link>
-            </div>
-          </div>
-        </nav>
+          }
+        />
 
-        <div className="max-w-4xl mx-auto px-4 py-24">
+        <main className="max-w-4xl mx-auto px-4 py-24">
           <div className="text-center">
             <div className="w-6 h-6 border-2 border-primary/30 border-t-primary rounded-full animate-spin mx-auto mb-4"></div>
             <p className="text-body">Loading dashboard...</p>
           </div>
-        </div>
+        </main>
       </div>
     );
   }
@@ -206,20 +221,15 @@ export default function DashboardPage() {
   if (error) {
     return (
       <div className="min-h-screen bg-background">
-        <nav className="terminal-navbar sticky top-0 z-50 backdrop-blur-sm">
-          <div className="max-w-7xl mx-auto px-4 h-full flex items-center justify-between">
-            <Link href="/" className="logo-text text-xl">
-              tradefirewall<span className="logo-underscore">_</span>
+        <SiteNav
+          actions={
+            <Link href="/check-trade">
+              <Button className="btn-primary px-4 py-2 text-sm">Check New Trade</Button>
             </Link>
-            <div className="flex items-center space-x-4">
-              <Link href="/check-trade">
-                <Button className="btn-primary px-4 py-2 text-sm">Check New Trade</Button>
-              </Link>
-            </div>
-          </div>
-        </nav>
+          }
+        />
 
-        <div className="max-w-4xl mx-auto px-4 py-24">
+        <main className="max-w-4xl mx-auto px-4 py-24">
           <div className="text-center">
             <div className="w-24 h-24 bg-danger/10 rounded-full flex items-center justify-center mx-auto mb-8">
               <span className="text-danger text-xl">⚠</span>
@@ -230,7 +240,7 @@ export default function DashboardPage() {
               Try Again
             </Button>
           </div>
-        </div>
+        </main>
       </div>
     );
   }
@@ -239,20 +249,15 @@ export default function DashboardPage() {
   if (!metrics || metrics.tradesChecked === 0) {
     return (
       <div className="min-h-screen bg-background">
-        <nav className="terminal-navbar sticky top-0 z-50 backdrop-blur-sm">
-          <div className="max-w-7xl mx-auto px-4 h-full flex items-center justify-between">
-            <Link href="/" className="logo-text text-xl">
-              tradefirewall<span className="logo-underscore">_</span>
+        <SiteNav
+          actions={
+            <Link href="/check-trade">
+              <Button className="btn-primary px-4 py-2 text-sm">Check New Trade</Button>
             </Link>
-            <div className="flex items-center space-x-4">
-              <Link href="/check-trade">
-                <Button className="btn-primary px-4 py-2 text-sm">Check New Trade</Button>
-              </Link>
-            </div>
-          </div>
-        </nav>
+          }
+        />
 
-        <div className="max-w-4xl mx-auto px-4 py-24">
+        <main className="max-w-4xl mx-auto px-4 py-24">
           <div className="text-center">
             <div className="w-24 h-24 bg-surface rounded-full flex items-center justify-center mx-auto mb-8">
               <div className="w-12 h-12 bg-primary/20 rounded-full flex items-center justify-center">
@@ -263,39 +268,53 @@ export default function DashboardPage() {
             <p className="text-body mb-8 max-w-md mx-auto">
               Start by analyzing your first trade in the Trade Risk Engine to see your dashboard come to life.
             </p>
+            
+            <div className="grid md:grid-cols-3 gap-4 mb-8 max-w-3xl mx-auto">
+              <div className="p-4 bg-surface rounded-lg border border-border">
+                <div className="text-2xl mb-2">🔍</div>
+                <div className="text-sm font-medium text-text-primary mb-1">Analyze Trades</div>
+                <div className="text-xs text-text-secondary">Check risk before executing</div>
+              </div>
+              <div className="p-4 bg-surface rounded-lg border border-border">
+                <div className="text-2xl mb-2">📈</div>
+                <div className="text-sm font-medium text-text-primary mb-1">Track History</div>
+                <div className="text-xs text-text-secondary">View your analysis history</div>
+              </div>
+              <div className="p-4 bg-surface rounded-lg border border-border">
+                <div className="text-2xl mb-2">⭐</div>
+                <div className="text-sm font-medium text-text-primary mb-1">Watch Assets</div>
+                <div className="text-xs text-text-secondary">Monitor your favorite tokens</div>
+              </div>
+            </div>
+            
             <Link href="/check-trade">
               <Button className="btn-primary px-8 py-3 text-base">
                 Check Your First Trade
               </Button>
             </Link>
           </div>
-        </div>
+        </main>
       </div>
     );
   }
   return (
     <div className="min-h-screen bg-background">
       {/* Navigation */}
-      <nav className="terminal-navbar sticky top-0 z-50 backdrop-blur-sm">
-        <div className="max-w-7xl mx-auto px-4 h-full flex items-center justify-between">
-          <Link href="/" className="logo-text text-xl">
-            tradefirewall<span className="logo-underscore">_</span>
-          </Link>
-          <div className="flex items-center space-x-4">
+      <SiteNav
+          actions={
             <Link href="/check-trade">
               <Button className="btn-primary px-4 py-2 text-sm">Check New Trade</Button>
             </Link>
-          </div>
-        </div>
-      </nav>
+          }
+        />
 
-      <div className="max-w-7xl mx-auto px-4 py-8">
+      <main className="max-w-7xl mx-auto px-4 py-8">
         {/* SECTION 1: Dashboard Header */}
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6 mb-12">
           <div>
             <h1 className="text-section-heading mb-2">Trading Dashboard</h1>
             <p className="text-body max-w-2xl">
-              Monitor your trade checks, portfolio risk, alerts, and market conditions in one place.
+              Review your trade checks, blocked trades, risk alerts, and watchlist in one place.
             </p>
           </div>
           
@@ -303,27 +322,17 @@ export default function DashboardPage() {
             <Link href="/check-trade">
               <Button className="btn-primary px-6 py-2">Check New Trade</Button>
             </Link>
-            <Button 
+            <Button
               className="btn-secondary px-6 py-2"
-              onClick={() => {
-                const data = storageManager.exportData();
-                if (data) {
-                  const blob = new Blob([data], { type: 'application/json' });
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement('a');
-                  a.href = url;
-                  a.download = `tradefirewall-reports-${new Date().toISOString().split('T')[0]}.json`;
-                  document.body.appendChild(a);
-                  a.click();
-                  document.body.removeChild(a);
-                  URL.revokeObjectURL(url);
-                  toast.success('Reports exported successfully.');
-                } else {
-                  toast.error('No data to export.');
-                }
-              }}
+              onClick={handleExportJSON}
             >
-              Export Reports
+              Export JSON
+            </Button>
+            <Button
+              className="btn-secondary px-6 py-2"
+              onClick={handleExportCSV}
+            >
+              Export CSV
             </Button>
             <Button 
               className="btn-secondary px-6 py-2"
@@ -466,10 +475,12 @@ export default function DashboardPage() {
                 </div>
                 <div className="space-y-3">
                   {(() => {
-                    const lowRisk = recentTradeChecks.filter(t => t.riskScore <= 25).length;
-                    const mediumRisk = recentTradeChecks.filter(t => t.riskScore > 25 && t.riskScore <= 50).length;
-                    const highRisk = recentTradeChecks.filter(t => t.riskScore > 50 && t.riskScore <= 75).length;
-                    const criticalRisk = recentTradeChecks.filter(t => t.riskScore > 75).length;
+                    const byBand = (band: RiskBand) =>
+                      recentTradeChecks.filter((t) => riskBand(t.riskScore) === band).length;
+                    const lowRisk = byBand('low');
+                    const mediumRisk = byBand('moderate');
+                    const highRisk = byBand('high');
+                    const criticalRisk = byBand('critical');
                     const total = recentTradeChecks.length;
 
                     return (
@@ -599,7 +610,7 @@ export default function DashboardPage() {
 
         {/* SECTION 5: Recent Trade Checks - Only show if user has trade history */}
         {recentTradeChecks.length > 0 && (
-          <Card className="terminal-card mb-12">
+          <Card id="reports" className="terminal-card mb-12 scroll-mt-24">
             <CardHeader>
               <CardTitle className="text-card-heading">Recent Trade Checks</CardTitle>
             </CardHeader>
@@ -686,17 +697,19 @@ export default function DashboardPage() {
                   Check a new trade
                 </Button>
               </Link>
-              <Button className="w-full btn-secondary">
+              <Button className="w-full btn-secondary" onClick={handleExportCSV}>
                 Export risk report
               </Button>
-              <Button className="w-full btn-secondary">
-                Configure API keys
-              </Button>
+              <Link href="/check-trade">
+                <Button className="w-full btn-secondary">
+                  Run a validation backtest
+                </Button>
+              </Link>
             </div>
           </CardContent>
         </Card>
 
-      </div>
+      </main>
     </div>
   );
 }

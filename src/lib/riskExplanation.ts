@@ -1,6 +1,9 @@
 // Risk intelligence explanation generator for risk analysis
 import { RiskAnalysis, TradeInput } from './riskEngine';
 
+/** Assets the "prefer a larger-cap asset" advice points at — never suggest them as an alternative to themselves. */
+const MAJOR_ASSETS = new Set(['BTC', 'ETH']);
+
 export interface RiskExplanation {
   summary: string;
   riskBreakdown: string;
@@ -171,7 +174,11 @@ class RiskExplanationGenerator {
       
       if (action === 'buy') {
         alternatives.push("Set limit orders below current market price");
-        alternatives.push("Consider more established assets like BTC or ETH if trading altcoins");
+        // Guarded: BTC/ETH are already the assets this advice points at, so telling a
+        // BTC or ETH trader to "consider more established assets" was nonsense.
+        if (!MAJOR_ASSETS.has(symbol.toUpperCase())) {
+          alternatives.push(`Consider a larger-cap asset such as BTC or ETH instead of ${symbol.toUpperCase()}`);
+        }
       }
       
       if (holdingPeriod === 'intraday') {

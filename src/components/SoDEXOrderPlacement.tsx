@@ -260,8 +260,9 @@ export function SoDEXOrderPlacement({ tradeInput, riskScore, decision }: SoDEXOr
             )}
 
             <div className="space-y-1.5">
-              <label className="text-xs text-text-secondary">Max slippage protection: {maxSlippagePct.toFixed(1)}%</label>
+              <label htmlFor="max-slippage" className="text-xs text-text-secondary">Max slippage protection: {maxSlippagePct.toFixed(1)}%</label>
               <input
+                id="max-slippage"
                 type="range"
                 min={0.1}
                 max={5}

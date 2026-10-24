@@ -4,7 +4,7 @@ import ToastContainer from "@/components/Toast";
 
 export const metadata: Metadata = {
   title: "TradeFirewall - Stop Bad Crypto Trades Before They Happen",
-  description: "AI-powered crypto pre-trade risk engine. Analyze trades before execution, detect hidden risks, and get safer alternatives.",
+  description: "Rule-based crypto pre-trade risk engine. Analyze trades before execution, detect hidden risks, and get safer alternatives.",
 };
 
 export default function RootLayout({

@@ -210,8 +210,9 @@
     color: #A3A3A3;
   }
   
-  /* Trusted by section */
-  .trusted-pill {
+  /* Intended-audience pills. Renamed from `trusted-pill`, which was a leftover from a removed
+     "Trusted by" customer logo strip. Nothing here is a customer, so the name claimed one. */
+  .audience-pill {
     background: #0B0F0E;
     border: 1px solid #252A28;
     border-radius: 0.5rem;

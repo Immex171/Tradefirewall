@@ -1,15 +1,59 @@
 'use client';
 
 import Link from 'next/link';
+import { SiteNav } from '@/components/SiteNav';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+
+const ANALYZE_RESPONSE = `{
+  "tradeInput": { "symbol": "BTC", "action": "buy", ... },
+  "riskAnalysis": {
+    "riskScore": 45,
+    "decision": "CAUTION",
+    "confidence": 0.72,
+    "reasons": ["High market volatility increases potential losses"],
+    "saferAction": "Consider reducing position size by 25-50% or wait for better entry",
+    "suggestedPositionSize": "Consider reducing to $3,271 (tolerance $5,000)",
+    "marketFactors": {
+      "volatility": 70, "sentiment": 40, "volume": 20, "trend": 30,
+      "liquidity": 10, "execution": 10, "sector": 50, "macro": 50,
+      "positionSize": 10, "holdingPeriod": 60
+    },
+    "factorWeights": { "volatility": 0.18, "sentiment": 0.10, ... },
+    "riskProfile": "balanced",
+    "riskProfileConfig": {
+      "approve": 35, "caution": 50, "reduce": 70,
+      "positionToleranceUsd": 5000
+    },
+    "riskProfileIsCustom": false,
+    "calibration": { "band": "elevated", "scoreRange": [36, 50], ... },
+    "reliability": { ... },
+    "dataSourcesUsed": ["SoSoValue: ...", "SoDEX: ..."],
+    "dataSourcesReport": {
+      "lines": ["SoSoValue: market intelligence (...)", ...],
+      "sosoValue": { "status": "connected", "live": true, ... },
+      "sodex": { "status": "connected", "live": true, "network": "testnet", ... }
+    },
+    "liveSnapshot": {
+      "sosoPrice": 45000, "sosoChange24hPct": 1.2,
+      "sodexLast": "45000.00", "sodexBid": "44999.90",
+      "sodexAsk": "45000.10", "spreadPercent": 0.0004
+    }
+  },
+  "riskExplanation": { "summary": "...", "factors": [...] },
+  "timestamp": 1640995200000,
+  "apiStatus": {
+    "sosoValueConnected": true, "sodexConnected": true,
+    "sosoValueLabel": "SoSoValue: Connected", "sodexLabel": "SoDEX: Connected",
+    "lastUpdatedIso": "...", "lastUpdatedDisplay": "..."
+  }
+}`;
 
 export default function APIPage() {
   const copyToClipboard = async (text: string, label: string) => {
     try {
       await navigator.clipboard.writeText(text);
-      // You could add a toast notification here
       console.log(`${label} copied to clipboard`);
     } catch (error) {
       console.error('Failed to copy:', error);
@@ -19,73 +63,51 @@ export default function APIPage() {
   return (
     <div className="min-h-screen bg-background">
       {/* Navigation */}
-      <nav className="terminal-navbar sticky top-0 z-50 backdrop-blur-sm">
-        <div className="max-w-7xl mx-auto px-4 h-full flex items-center justify-between">
-          <Link href="/" className="logo-text text-xl">
-            tradefirewall<span className="logo-underscore">_</span>
+      <SiteNav
+        actions={
+          <Link href="/check-trade">
+            <Button className="btn-primary px-4 py-2 text-sm">Go to App</Button>
           </Link>
-          <div className="flex items-center space-x-4">
-            <Link href="/check-trade">
-              <Button className="btn-primary px-4 py-2 text-sm">Go to App</Button>
-            </Link>
-          </div>
-        </div>
-      </nav>
+        }
+      />
 
-      <div className="max-w-7xl mx-auto px-4 py-12">
+      <main className="max-w-7xl mx-auto px-4 py-12">
         {/* Header */}
         <div className="text-center mb-16">
           <h1 className="text-section-heading mb-6">
-            TradeFirewall API Documentation
+            API Reference
           </h1>
           <p className="text-xl text-body max-w-3xl mx-auto leading-relaxed">
-            Integrate risk intelligence into your trading platform, wallet, or DeFi application. 
-            Get real-time risk scores for any proposed trade.
+            TradeFirewall exposes four HTTP endpoints from this same Next.js deployment. They are the ones the
+            app itself calls — there is no separate hosted API, no API keys, and no SDK packages.
           </p>
         </div>
 
-        {/* Quick Start */}
-        <div className="mb-16">
-          <h2 className="text-section-heading mb-8">Quick Start</h2>
-          
-          <div className="grid md:grid-cols-2 gap-8">
-            <Card className="terminal-card">
-              <CardHeader>
-                <CardTitle className="text-card-heading">1. Get API Key</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-body mb-4">
-                  Sign up for a TradeFirewall account and generate your API key from the dashboard.
-                </p>
-                <Link href="/pricing">
-                  <Button className="btn-primary">Get API Access</Button>
-                </Link>
-              </CardContent>
-            </Card>
+        {/* Status honesty banner */}
+        <Card className="terminal-card border-warning/30 mb-16">
+          <CardContent className="pt-6 space-y-2 text-sm text-text-secondary leading-relaxed">
+            <p>
+              <span className="text-text-primary font-medium">Before you integrate:</span> these routes are
+              <span className="text-text-primary font-medium"> unauthenticated and unmetered</span>. There is no API key,
+              no rate limiting, no quota, and no per-caller isolation — every request spends this deployment&apos;s
+              SoSoValue and SoDEX quota. They are built for the web UI and for local/trusted-network use. Adding auth and
+              rate limiting is required work before exposing this to the public internet.
+            </p>
+            <p>
+              Upstream failures are surfaced honestly rather than hidden: if SoSoValue cannot be reached the request
+              fails with <span className="font-mono text-xs">503</span> and no score is returned, while a SoDEX outage
+              degrades to SoSoValue-only scoring with the affected factors set to a neutral 50 and the degradation
+              recorded in <span className="font-mono text-xs">apiStatus</span> and{' '}
+              <span className="font-mono text-xs">dataSourcesReport</span>. Always check{' '}
+              <span className="font-mono text-xs">apiStatus.sodexConnected</span> before trusting a score.
+            </p>
+          </CardContent>
+        </Card>
 
-            <Card className="terminal-card">
-              <CardHeader>
-                <CardTitle className="text-card-heading">2. Make Your First Request</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-body mb-4">
-                  Send a POST request to analyze any trade proposal and get a risk score.
-                </p>
-                <Button 
-                  className="btn-secondary"
-                  onClick={() => copyToClipboard('curl -X POST https://api.tradefirewall.com/v1/analyze-trade', 'API endpoint')}
-                >
-                  Copy Example
-                </Button>
-              </CardContent>
-            </Card>
-          </div>
-        </div>
-
-        {/* API Endpoints */}
+        {/* Endpoints */}
         <div className="mb-16">
-          <h2 className="text-section-heading mb-8">API Endpoints</h2>
-          
+          <h2 className="text-section-heading mb-8">Endpoints</h2>
+
           <div className="space-y-8">
             {/* Analyze Trade */}
             <Card className="terminal-card">
@@ -99,7 +121,7 @@ export default function APIPage() {
                 <div>
                   <h4 className="text-label mb-2">Endpoint</h4>
                   <div className="bg-surface p-3 rounded-lg font-mono text-sm">
-                    POST https://api.tradefirewall.com/v1/analyze-trade
+                    POST /api/analyze-trade
                   </div>
                 </div>
 
@@ -116,11 +138,27 @@ export default function APIPage() {
 }`}
                     </pre>
                   </div>
-                  <Button 
-                    className="btn-secondary text-xs mt-2"
+                  <div className="mt-2 text-xs text-text-secondary space-y-1">
+                    <div><span className="font-mono">symbol</span> — required, 2&ndash;10 letters, uppercased server-side.</div>
+                    <div><span className="font-mono">action</span> — required, <span className="font-mono">buy</span> or <span className="font-mono">sell</span>. Threaded into the trend, sentiment and sector factors.</div>
+                    <div><span className="font-mono">amount</span> — required, positive USD notional.</div>
+                    <div><span className="font-mono">holdingPeriod</span> — required, one of <span className="font-mono">intraday</span>, <span className="font-mono">1day</span>, <span className="font-mono">7days</span>, <span className="font-mono">30days</span>.</div>
+                    <div>
+                      <span className="font-mono">riskProfile</span> — required. A built-in name (<span className="font-mono">conservative</span>, <span className="font-mono">balanced</span>, <span className="font-mono">aggressive</span>)
+                      takes no config. Any other name must be accompanied by <span className="font-mono">riskProfileConfig</span>.
+                    </div>
+                    <div>
+                      <span className="font-mono">riskProfileConfig</span> — optional, for custom profiles only:{' '}
+                      <span className="font-mono">{'{ approve, caution, reduce, positionToleranceUsd }'}</span>.
+                      Server-clamped to 0&ndash;100 (thresholds), $100&ndash;$1,000,000 (tolerance) and forced monotonic, so a
+                      client cannot post <span className="font-mono">approve: 9999</span> to force an APPROVE.
+                    </div>
+                  </div>
+                  <Button
+                    className="btn-secondary text-xs mt-3"
                     onClick={() => copyToClipboard(`{
   "symbol": "BTC",
-  "action": "buy", 
+  "action": "buy",
   "amount": 5000,
   "holdingPeriod": "1day",
   "riskProfile": "balanced"
@@ -131,51 +169,24 @@ export default function APIPage() {
                 </div>
 
                 <div>
-                  <h4 className="text-label mb-2">Response</h4>
+                  <h4 className="text-label mb-2">Response (abridged)</h4>
                   <div className="bg-surface p-4 rounded-lg">
-                    <pre className="text-sm text-text-primary overflow-x-auto">
-{`{
-  "riskScore": 45,
-  "decision": "CAUTION",
-  "confidence": 0.85,
-  "reasons": [
-    "Medium volatility detected",
-    "Positive market sentiment"
-  ],
-  "recommendedAction": "Consider reducing position size by 25%",
-  "suggestedPositionSize": "$3,750",
-  "marketFactors": {
-    "volatility": 55,
-    "sentiment": 35,
-    "volume": 40,
-    "liquidity": 25
-  },
-  "dataSourcesUsed": ["SoSoValue", "SoDEX"],
-  "timestamp": 1640995200000
-}`}
+                    <pre className="text-xs text-text-primary overflow-x-auto">
+{ANALYZE_RESPONSE}
                     </pre>
                   </div>
-                  <Button 
+                  <Button
                     className="btn-secondary text-xs mt-2"
-                    onClick={() => copyToClipboard(`{
-  "riskScore": 45,
-  "decision": "CAUTION", 
-  "confidence": 0.85,
-  "reasons": ["Medium volatility detected", "Positive market sentiment"],
-  "recommendedAction": "Consider reducing position size by 25%",
-  "suggestedPositionSize": "$3,750",
-  "marketFactors": {
-    "volatility": 55,
-    "sentiment": 35, 
-    "volume": 40,
-    "liquidity": 25
-  },
-  "dataSourcesUsed": ["SoSoValue", "SoDEX"],
-  "timestamp": 1640995200000
-}`, 'Response example')}
+                    onClick={() => copyToClipboard(ANALYZE_RESPONSE, 'Response example')}
                   >
                     Copy Response
                   </Button>
+                  <p className="text-xs text-text-secondary mt-2">
+                    Abridged for reading. <span className="font-mono">marketFactors</span> always carries all ten
+                    factors; the ellipses stand for further fields, not for absent ones. No field here is a language-model
+                    output — every score is computed by the weighted model in{' '}
+                    <span className="font-mono">src/lib/riskEngine.ts</span> and published with its own weight.
+                  </p>
                 </div>
               </CardContent>
             </Card>
@@ -192,7 +203,20 @@ export default function APIPage() {
                 <div>
                   <h4 className="text-label mb-2">Endpoint</h4>
                   <div className="bg-surface p-3 rounded-lg font-mono text-sm">
-                    POST https://api.tradefirewall.com/v1/execution-preview
+                    POST /api/execution-preview
+                  </div>
+                </div>
+
+                <div>
+                  <h4 className="text-label mb-2">Request Body</h4>
+                  <div className="bg-surface p-4 rounded-lg">
+                    <pre className="text-sm text-text-primary overflow-x-auto">
+{`{
+  "symbol": "BTC",
+  "action": "buy",
+  "amount": 5000
+}`}
+                    </pre>
                   </div>
                 </div>
 
@@ -202,96 +226,76 @@ export default function APIPage() {
                     <pre className="text-sm text-text-primary overflow-x-auto">
 {`{
   "symbol": "BTC",
-  "estimatedPrice": 45000,
-  "estimatedSlippage": 0.015,
-  "estimatedFees": 0.001,
-  "priceImpact": 0.008,
-  "executionProbability": 0.92,
-  "warnings": ["High slippage expected"],
-  "canExecute": true,
-  "mode": "testnet"
+  "side": "BUY",
+  "amount": 5000,
+  "estimatedPrice": 45000.05,
+  "estimatedSlippage": 0.0012,
+  "estimatedFees": 0.045,
+  "priceImpact": 0.0008,
+  "executionProbability": 0.9,
+  "warnings": [],
+  "canExecute": false,
+  "mode": "preview",
+  "timestamp": 1640995200000,
+  "disclaimer": "This is a preview only. No real trades will be executed."
 }`}
                     </pre>
                   </div>
-                  <Button 
-                    className="btn-secondary text-xs mt-2"
-                    onClick={() => copyToClipboard(`{
-  "symbol": "BTC",
-  "estimatedPrice": 45000,
-  "estimatedSlippage": 0.015,
-  "estimatedFees": 0.001,
-  "priceImpact": 0.008,
-  "executionProbability": 0.92,
-  "warnings": ["High slippage expected"],
-  "canExecute": true,
-  "mode": "testnet"
-}`, 'Execution preview response')}
-                  >
-                    Copy Response
-                  </Button>
+                  <p className="text-xs text-text-secondary mt-2">
+                    <span className="font-mono">canExecute</span> is hardcoded <span className="font-mono">false</span> and{' '}
+                    <span className="font-mono">mode</span> is always <span className="font-mono">preview</span> on this
+                    route. It walks the live SoDEX book to estimate fill cost and never places anything.
+                  </p>
                 </div>
-              </CardContent>
-            </Card>
-          </div>
-        </div>
-
-        {/* Authentication */}
-        <div className="mb-16">
-          <h2 className="text-section-heading mb-8">Authentication</h2>
-          
-          <Card className="terminal-card">
-            <CardContent className="pt-6 space-y-4">
-              <p className="text-body">
-                Include your API key in the Authorization header of all requests:
-              </p>
-              <div className="bg-surface p-4 rounded-lg">
-                <pre className="text-sm text-text-primary">
-{`Authorization: Bearer YOUR_API_KEY
-Content-Type: application/json`}
-                </pre>
-              </div>
-              <Button 
-                className="btn-secondary text-xs"
-                onClick={() => copyToClipboard('Authorization: Bearer YOUR_API_KEY\nContent-Type: application/json', 'Headers')}
-              >
-                Copy Headers
-              </Button>
             </CardContent>
-          </Card>
-        </div>
+            </Card>
 
-        {/* Rate Limits */}
-        <div className="mb-16">
-          <h2 className="text-section-heading mb-8">Rate Limits</h2>
-          
-          <div className="grid md:grid-cols-3 gap-6">
-            <Card className="terminal-card">
+            {/* Place Order */}
+            <Card className="terminal-card border-primary/20">
               <CardHeader>
-                <CardTitle className="text-card-heading">Free Tier</CardTitle>
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-card-heading">Place Signed Order (testnet)</CardTitle>
+                  <Badge className="bg-primary text-background">POST</Badge>
+                </div>
               </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold text-text-primary mb-2">10</div>
-                <div className="text-body">requests per month</div>
+              <CardContent className="space-y-4 text-sm text-text-secondary leading-relaxed">
+                <div className="bg-surface p-3 rounded-lg font-mono text-sm text-text-primary">
+                  POST /api/sodex/place-order
+                </div>
+                <p>
+                  Submits a client-signed order to the SoDEX <span className="font-mono">testnet</span> spot API. Two
+                  constraints are enforced server-side and are not configurable: the deployment must be running with{' '}
+                  <span className="font-mono">SODEX_USE_TESTNET=true</span>, and the request is routed to the testnet
+                  gateway regardless of payload content. If either fails the route returns{' '}
+                  <span className="font-mono">403 MAINNET_DISABLED</span>. Mainnet execution is not implemented in this
+                  app.
+                </p>
+                <p>
+                  The signature is produced by the user&apos;s wallet in the browser; this route forwards the already-signed
+                  payload. It cannot move mainnet funds under any input.
+                </p>
               </CardContent>
             </Card>
 
+            {/* Currencies */}
             <Card className="terminal-card">
               <CardHeader>
-                <CardTitle className="text-card-heading">Advanced Trader</CardTitle>
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-card-heading">Supported Symbols</CardTitle>
+                  <Badge className="bg-primary text-background">GET</Badge>
+                </div>
               </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold text-text-primary mb-2">1,000</div>
-                <div className="text-body">requests per month</div>
-              </CardContent>
-            </Card>
-
-            <Card className="terminal-card">
-              <CardHeader>
-                <CardTitle className="text-card-heading">Enterprise</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold text-text-primary mb-2">Unlimited</div>
-                <div className="text-body">custom rate limits</div>
+              <CardContent className="space-y-4 text-sm text-text-secondary leading-relaxed">
+                <div className="bg-surface p-3 rounded-lg font-mono text-sm text-text-primary">
+                  GET /api/sosovalue/currencies
+                </div>
+                <p>
+                  Proxies the SoSoValue currency list so the symbol combobox can be populated without exposing the
+                  server-side API key to the browser. Returns{' '}
+                  <span className="font-mono">{'{ currencies: [{ symbol, name }] }'}</span>. Symbols are validated
+                  against this list at analysis time, so a symbol that SoSoValue does not carry fails with a{' '}
+                  <span className="font-mono">404</span> rather than being silently scored.
+                </p>
               </CardContent>
             </Card>
           </div>
@@ -300,7 +304,7 @@ Content-Type: application/json`}
         {/* Error Codes */}
         <div className="mb-16">
           <h2 className="text-section-heading mb-8">Error Codes</h2>
-          
+
           <Card className="terminal-card">
             <CardContent className="pt-6">
               <div className="terminal-table">
@@ -308,145 +312,95 @@ Content-Type: application/json`}
                   <thead>
                     <tr>
                       <th className="text-left">Code</th>
-                      <th className="text-left">Description</th>
-                      <th className="text-left">Solution</th>
+                      <th className="text-left">errorType</th>
+                      <th className="text-left">Meaning</th>
                     </tr>
                   </thead>
                   <tbody>
                     <tr>
                       <td className="text-text-primary font-mono">400</td>
-                      <td className="text-text-secondary">Invalid request format</td>
-                      <td className="text-text-secondary">Check request body structure</td>
+                      <td className="text-text-secondary font-mono text-xs">—</td>
+                      <td className="text-text-secondary">Missing/invalid field: bad symbol format, action, holding period, or a custom profile without thresholds</td>
                     </tr>
                     <tr>
-                      <td className="text-text-primary font-mono">401</td>
-                      <td className="text-text-secondary">Invalid API key</td>
-                      <td className="text-text-secondary">Verify your API key</td>
+                      <td className="text-text-primary font-mono">403</td>
+                      <td className="text-text-secondary font-mono text-xs">MAINNET_DISABLED</td>
+                      <td className="text-text-secondary">Order placement requested while not on testnet</td>
                     </tr>
                     <tr>
                       <td className="text-text-primary font-mono">404</td>
-                      <td className="text-text-secondary">Symbol not found</td>
-                      <td className="text-text-secondary">Use supported symbols only</td>
+                      <td className="text-text-secondary font-mono text-xs">SYMBOL_NOT_FOUND, SYMBOL_NOT_FOUND_SOSOVALUE</td>
+                      <td className="text-text-secondary">Symbol is not carried by SoSoValue or not listed on SoDEX</td>
                     </tr>
                     <tr>
-                      <td className="text-text-primary font-mono">429</td>
-                      <td className="text-text-secondary">Rate limit exceeded</td>
-                      <td className="text-text-secondary">Upgrade your plan</td>
+                      <td className="text-text-primary font-mono">500</td>
+                      <td className="text-text-secondary font-mono text-xs">ANALYSIS_ERROR</td>
+                      <td className="text-text-secondary">Unhandled failure — stack trace is server-side only</td>
+                    </tr>
+                    <tr>
+                      <td className="text-text-primary font-mono">502</td>
+                      <td className="text-text-secondary font-mono text-xs">SOSOVALUE_API_ERROR, SOSOVALUE_HTTP_ERROR</td>
+                      <td className="text-text-secondary">SoSoValue rejected the request or was unreachable — required, so no score is returned</td>
                     </tr>
                     <tr>
                       <td className="text-text-primary font-mono">503</td>
-                      <td className="text-text-secondary">Market data unavailable</td>
-                      <td className="text-text-secondary">Retry after a few minutes</td>
+                      <td className="text-text-secondary font-mono text-xs">API_CONNECTION_ERROR, SODEX_ERROR, SODEX_MARKET_ERROR, INSUFFICIENT_DATA</td>
+                      <td className="text-text-secondary">Upstream market data unavailable. A SoDEX 503 is the one case that still returns a score — neutral-factor degraded, flagged in apiStatus</td>
                     </tr>
                   </tbody>
                 </table>
               </div>
+              <p className="text-xs text-text-secondary mt-4">
+                There is no <span className="font-mono">401</span>, <span className="font-mono">429</span> or any
+                quota response, because this build has no authentication and no rate limiter.
+              </p>
             </CardContent>
           </Card>
         </div>
 
-        {/* SDKs */}
+        {/* Client libraries */}
         <div className="mb-16">
-          <h2 className="text-section-heading mb-8">SDKs & Libraries</h2>
-          
-          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
-            <Card className="terminal-card">
-              <CardHeader>
-                <CardTitle className="text-card-heading">JavaScript</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="bg-surface p-3 rounded-lg font-mono text-sm mb-3">
-                  npm install tradefirewall
-                </div>
-                <Button 
-                  className="w-full btn-secondary text-xs"
-                  onClick={() => copyToClipboard('npm install tradefirewall', 'NPM install command')}
-                >
-                  Copy Install
-                </Button>
-              </CardContent>
-            </Card>
-
-            <Card className="terminal-card">
-              <CardHeader>
-                <CardTitle className="text-card-heading">Python</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="bg-surface p-3 rounded-lg font-mono text-sm mb-3">
-                  pip install tradefirewall
-                </div>
-                <Button 
-                  className="w-full btn-secondary text-xs"
-                  onClick={() => copyToClipboard('pip install tradefirewall', 'Pip install command')}
-                >
-                  Copy Install
-                </Button>
-              </CardContent>
-            </Card>
-
-            <Card className="terminal-card">
-              <CardHeader>
-                <CardTitle className="text-card-heading">Go</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="bg-surface p-3 rounded-lg font-mono text-sm mb-3">
-                  go get tradefirewall
-                </div>
-                <Button 
-                  className="w-full btn-secondary text-xs"
-                  onClick={() => copyToClipboard('go get tradefirewall', 'Go get command')}
-                >
-                  Copy Install
-                </Button>
-              </CardContent>
-            </Card>
-
-            <Card className="terminal-card">
-              <CardHeader>
-                <CardTitle className="text-card-heading">Rust</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="bg-surface p-3 rounded-lg font-mono text-sm mb-3">
-                  cargo add tradefirewall
-                </div>
-                <Button 
-                  className="w-full btn-secondary text-xs"
-                  onClick={() => copyToClipboard('cargo add tradefirewall', 'Cargo add command')}
-                >
-                  Copy Install
-                </Button>
-              </CardContent>
-            </Card>
-          </div>
+          <h2 className="text-section-heading mb-8">Client Libraries</h2>
+          <Card className="terminal-card">
+            <CardContent className="pt-6 text-sm text-text-secondary leading-relaxed">
+              There are none. No <span className="font-mono">tradefirewall</span> package is published to npm, PyPI,
+              crates.io or any Go module proxy — those install commands would fail. Both endpoints are plain JSON over
+              HTTP, so a caller needs about ten lines:
+              <pre className="text-xs text-text-primary bg-surface p-3 rounded-lg mt-3 overflow-x-auto">
+{`const res = await fetch('/api/analyze-trade', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    symbol: 'BTC', action: 'buy', amount: 5000,
+    holdingPeriod: '1day', riskProfile: 'balanced',
+  }),
+});
+if (!res.ok) throw new Error((await res.json()).error);
+const { riskAnalysis, apiStatus } = await res.json();
+if (!apiStatus.sodexConnected) {
+  // degraded score: volatility/liquidity/execution were neutral-defaulted
+}`}
+              </pre>
+            </CardContent>
+          </Card>
         </div>
 
         {/* CTA */}
         <div className="text-center bg-surface rounded-2xl p-12">
-          <h2 className="text-section-heading mb-6">Ready to Integrate?</h2>
+          <h2 className="text-section-heading mb-6">See It Against Real Market Data</h2>
           <p className="text-xl text-body mb-8 max-w-2xl mx-auto leading-relaxed">
-            Start building with TradeFirewall API today. Get your API key and begin adding risk intelligence to your platform.
+            Every endpoint above runs live per request, against SoSoValue and SoDEX.
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <Link href="/pricing">
-              <Button className="btn-primary px-8 py-3 text-base">
-                Get API Access
-              </Button>
+            <Link href="/check-trade">
+              <Button className="btn-primary px-8 py-3 text-base">Run an Analysis</Button>
             </Link>
-            <Button 
-              className="btn-secondary px-8 py-3 text-base"
-              onClick={() => {
-                const email = 'support@tradefirewall.com';
-                const subject = 'API Integration Support';
-                const body = 'Hi, I need help integrating the TradeFirewall API. Please provide technical support.';
-                window.location.href = `mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-              }}
-            >
-              Contact Support
-            </Button>
+            <Link href="/validate">
+              <Button className="btn-secondary px-8 py-3 text-base">Read the Backtest</Button>
+            </Link>
           </div>
         </div>
-
-      </div>
+      </main>
     </div>
   );
 }

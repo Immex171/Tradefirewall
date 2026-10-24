@@ -1,4 +1,11 @@
 import type { DataSourcesReport } from '@/lib/riskEngine';
+import {
+  isBuiltInProfile,
+  isValidProfileName,
+  sanitizeProfileConfig,
+  RiskProfileConfig,
+  UserCustomRiskProfile,
+} from '@/lib/riskProfiles';
 
 export interface WatchlistItem {
   symbol: string;
@@ -35,6 +42,8 @@ export interface UserSettings {
   theme: 'light' | 'dark';
   notifications: boolean;
   defaultRiskProfile: string;
+  /** User-defined grading profiles. Built-ins are not stored here — see BUILT_IN_RISK_PROFILES. */
+  customRiskProfiles: UserCustomRiskProfile[];
 }
 
 class StorageManager {
@@ -44,6 +53,7 @@ class StorageManager {
 
   // Watchlist Management
   getWatchlist(): WatchlistItem[] {
+    if (typeof window === 'undefined') return [];
     try {
       const data = localStorage.getItem(this.WATCHLIST_KEY);
       return data ? JSON.parse(data) : [];
@@ -111,6 +121,10 @@ class StorageManager {
 
   // Reports Management
   getReports(): SavedReport[] {
+    // The dashboard and check-trade pages are prerendered at build time, where there is no
+    // localStorage. Touching it here threw a ReferenceError that the catch below swallowed,
+    // logging a spurious failure on every build.
+    if (typeof window === 'undefined') return [];
     try {
       const data = localStorage.getItem(this.REPORTS_KEY);
       return data ? JSON.parse(data) : [];
@@ -174,49 +188,115 @@ class StorageManager {
     }
   }
 
-  deleteReport(id: string): { success: boolean; message: string } {
-    try {
-      const reports = this.getReports();
-      const filtered = reports.filter(r => r.id !== id);
-      
-      if (filtered.length === reports.length) {
-        return { success: false, message: 'Report not found.' };
-      }
-
-      localStorage.setItem(this.REPORTS_KEY, JSON.stringify(filtered));
-      return { success: true, message: 'Report deleted.' };
-    } catch (error) {
-      console.error('Error deleting report:', error);
-      return { success: false, message: 'Unable to delete report.' };
-    }
-  }
-
   // Settings Management
+  private static readonly DEFAULT_SETTINGS: UserSettings = {
+    theme: 'light',
+    notifications: true,
+    defaultRiskProfile: 'balanced',
+    customRiskProfiles: [],
+  };
+
   getSettings(): UserSettings {
+    if (typeof window === 'undefined') return { ...StorageManager.DEFAULT_SETTINGS };
     try {
       const data = localStorage.getItem(this.SETTINGS_KEY);
-      return data ? JSON.parse(data) : {
-        theme: 'light',
-        notifications: true,
-        defaultRiskProfile: 'balanced'
+      if (!data) return { ...StorageManager.DEFAULT_SETTINGS };
+      const parsed = JSON.parse(data) as Partial<UserSettings>;
+      return {
+        ...StorageManager.DEFAULT_SETTINGS,
+        ...parsed,
+        // Older saved settings predate custom profiles; normalize rather than trust the shape.
+        customRiskProfiles: this.sanitizeStoredProfiles(parsed.customRiskProfiles),
       };
     } catch (error) {
       console.error('Error loading settings:', error);
-      return {
-        theme: 'light',
-        notifications: true,
-        defaultRiskProfile: 'balanced'
-      };
+      return { ...StorageManager.DEFAULT_SETTINGS };
     }
+  }
+
+  private sanitizeStoredProfiles(raw: unknown): UserCustomRiskProfile[] {
+    if (!Array.isArray(raw)) return [];
+    const seen = new Set<string>();
+    const out: UserCustomRiskProfile[] = [];
+    for (const entry of raw) {
+      if (!entry || typeof entry !== 'object') continue;
+      const { name, config, createdAt } = entry as { name?: unknown; config?: unknown; createdAt?: unknown };
+      if (!isValidProfileName(name) || isBuiltInProfile(name)) continue;
+      if (seen.has(name.toLowerCase())) continue;
+      const sanitized = sanitizeProfileConfig(config);
+      if (!sanitized) continue;
+      seen.add(name.toLowerCase());
+      out.push({
+        name,
+        config: sanitized,
+        createdAt: typeof createdAt === 'number' && Number.isFinite(createdAt) ? createdAt : Date.now(),
+      });
+    }
+    return out;
   }
 
   updateSettings(updates: Partial<UserSettings>): void {
     try {
       const settings = this.getSettings();
       const newSettings = { ...settings, ...updates };
+      if (updates.customRiskProfiles) {
+        newSettings.customRiskProfiles = this.sanitizeStoredProfiles(updates.customRiskProfiles);
+      }
       localStorage.setItem(this.SETTINGS_KEY, JSON.stringify(newSettings));
     } catch (error) {
       console.error('Error updating settings:', error);
+    }
+  }
+
+  // Custom risk profiles
+  getCustomRiskProfiles(): UserCustomRiskProfile[] {
+    return this.getSettings().customRiskProfiles;
+  }
+
+  /** Returns an error message on failure, or null on success — matches the addToWatchlist shape. */
+  saveCustomRiskProfile(name: string, config: RiskProfileConfig): { success: boolean; message: string } {
+    const trimmed = name.trim();
+    if (!isValidProfileName(trimmed)) {
+      return {
+        success: false,
+        message: 'Profile names must start with a letter and use only letters, digits, spaces, hyphens or underscores.',
+      };
+    }
+    if (isBuiltInProfile(trimmed.toLowerCase())) {
+      return { success: false, message: `"${trimmed}" is a built-in profile and cannot be overwritten.` };
+    }
+    const sanitized = sanitizeProfileConfig(config);
+    if (!sanitized) {
+      return { success: false, message: 'Enter valid thresholds (0-100) and a position tolerance above $100.' };
+    }
+    try {
+      const existing = this.getCustomRiskProfiles();
+      const idx = existing.findIndex((p) => p.name.toLowerCase() === trimmed.toLowerCase());
+      if (idx >= 0) {
+        existing[idx] = { ...existing[idx], config: sanitized };
+      } else {
+        existing.push({ name: trimmed, config: sanitized, createdAt: Date.now() });
+      }
+      this.updateSettings({ customRiskProfiles: existing });
+      return { success: true, message: `Profile "${trimmed}" saved.` };
+    } catch (error) {
+      console.error('Error saving custom risk profile:', error);
+      return { success: false, message: 'Unable to save profile.' };
+    }
+  }
+
+  deleteCustomRiskProfile(name: string): { success: boolean; message: string } {
+    try {
+      const existing = this.getCustomRiskProfiles();
+      const filtered = existing.filter((p) => p.name.toLowerCase() !== name.toLowerCase());
+      if (filtered.length === existing.length) {
+        return { success: false, message: `Profile "${name}" not found.` };
+      }
+      this.updateSettings({ customRiskProfiles: filtered });
+      return { success: true, message: `Profile "${name}" deleted.` };
+    } catch (error) {
+      console.error('Error deleting custom risk profile:', error);
+      return { success: false, message: 'Unable to delete profile.' };
     }
   }
 
@@ -242,6 +322,51 @@ class StorageManager {
       return JSON.stringify(data, null, 2);
     } catch (error) {
       console.error('Error exporting data:', error);
+      return '';
+    }
+  }
+
+  exportReportsToCSV(): string {
+    try {
+      const reports = this.getReports();
+      if (reports.length === 0) return '';
+
+      const headers = [
+        'Date',
+        'Symbol',
+        'Action',
+        'Amount (USD)',
+        'Holding Period',
+        'Risk Profile',
+        'Risk Score',
+        'Decision',
+        'Recommended Action',
+        'Position Size Suggestion',
+        'Status'
+      ];
+
+      const rows = reports.map(report => [
+        new Date(report.createdAt).toLocaleDateString(),
+        report.symbol,
+        report.action,
+        report.amount.toLocaleString(),
+        report.holdingPeriod,
+        report.riskProfile,
+        report.riskScore,
+        report.decision,
+        report.recommendedAction,
+        report.suggestedPositionSize,
+        report.status || 'completed'
+      ]);
+
+      const csvContent = [
+        headers.join(','),
+        ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+      ].join('\n');
+
+      return csvContent;
+    } catch (error) {
+      console.error('Error exporting reports to CSV:', error);
       return '';
     }
   }

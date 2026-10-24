@@ -213,17 +213,24 @@ class SoDEXAPI {
   private async fetchSpot(path: string, baseUrlOverride?: string): Promise<unknown> {
     const base = baseUrlOverride ?? this.spotBaseUrl;
     const url = `${base}${path.startsWith('/') ? path : `/${path}`}`;
-    const response = await fetch(url, {
-      headers: {
-        Accept: 'application/json',
-        'User-Agent': 'TradeFirewall/1.1',
-      },
-      next: { revalidate: 0 },
-    });
-    if (!response.ok) {
-      throw new Error(`SoDEX HTTP ${response.status}: ${response.statusText}`);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    try {
+      const response = await fetch(url, {
+        headers: {
+          Accept: 'application/json',
+          'User-Agent': 'TradeFirewall/1.1',
+        },
+        signal: controller.signal,
+        next: { revalidate: 0 },
+      });
+      if (!response.ok) {
+        throw new Error(`SoDEX HTTP ${response.status}: ${response.statusText}`);
+      }
+      return this.unwrap(await response.json());
+    } finally {
+      clearTimeout(timeout);
     }
-    return this.unwrap(await response.json());
   }
 
   private mapSymbolToSodexFormat(symbol: string): string {

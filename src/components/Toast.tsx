@@ -8,6 +8,15 @@ interface ToastItemProps {
   onRemove: (id: string) => void;
 }
 
+const assertiveTypes: ReadonlySet<ToastType> = new Set<ToastType>(['error', 'warning']);
+
+// Errors interrupt; everything else waits for a pause. The item role and the region's politeness
+// must agree, otherwise an assertive item inside a polite region is swallowed by some screen
+// readers while others double-announce it.
+function getToastRole(type: ToastType): 'alert' | 'status' {
+  return assertiveTypes.has(type) ? 'alert' : 'status';
+}
+
 function ToastItem({ toast, onRemove }: ToastItemProps) {
   const getToastStyles = (type: ToastType): string => {
     const baseStyles = "flex items-center p-4 mb-3 rounded-lg shadow-lg max-w-sm w-full transition-all duration-300 ease-in-out border";
@@ -42,8 +51,11 @@ function ToastItem({ toast, onRemove }: ToastItemProps) {
   };
 
   return (
-    <div className={getToastStyles(toast.type)}>
-      <div className="flex-shrink-0 w-5 h-5 flex items-center justify-center rounded-full bg-current bg-opacity-10 text-sm font-bold mr-3">
+    <div className={getToastStyles(toast.type)} role={getToastRole(toast.type)}>
+      <div
+        className="flex-shrink-0 w-5 h-5 flex items-center justify-center rounded-full bg-current bg-opacity-10 text-sm font-bold mr-3"
+        aria-hidden="true"
+      >
         {getIcon(toast.type)}
       </div>
       <div className="flex-1 text-sm font-medium text-text-primary">
@@ -65,12 +77,18 @@ function ToastItem({ toast, onRemove }: ToastItemProps) {
 export function ToastContainer() {
   const { toasts, removeToast } = useToast();
 
-  if (toasts.length === 0) {
-    return null;
-  }
-
   return (
-    <div className="fixed top-4 right-4 z-50 space-y-2">
+    // The region is always mounted, even when empty. A live region that is inserted into the DOM
+    // at the same moment as its first message is frequently not announced at all, because the
+    // assistive technology has not registered the region yet. `aria-relevant="additions"` limits
+    // announcements to newly added toasts, so removing one does not re-read the rest.
+    <div
+      role="region"
+      aria-label="Notifications"
+      aria-live="polite"
+      aria-relevant="additions"
+      className="fixed top-4 right-4 z-50 space-y-2"
+    >
       {toasts.map((toast) => (
         <ToastItem
           key={toast.id}

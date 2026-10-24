@@ -3,6 +3,14 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Decision, RiskAnalysis } from '@/lib/riskEngine';
+import {
+  RISK_BAND_LABEL,
+  RISK_BAND_TEXT_CLASS,
+  confidenceColor,
+  decisionBadgeClass,
+  decisionLabel,
+  riskBand,
+} from '@/lib/riskBand';
 
 interface RiskScoreCardProps {
   riskScore: number;
@@ -13,48 +21,8 @@ interface RiskScoreCardProps {
 }
 
 export function RiskScoreCard({ riskScore, decision, confidence, calibration, reliability }: RiskScoreCardProps) {
-  const getScoreColor = (score: number) => {
-    if (score >= 76) return 'risk-critical';
-    if (score >= 51) return 'risk-high';
-    if (score >= 26) return 'risk-medium';
-    return 'risk-low';
-  };
+  const band = riskBand(riskScore);
 
-  const getDecisionBadge = (decision: Decision) => {
-    const variants = {
-      'APPROVE': 'bg-success text-background',
-      'CAUTION': 'bg-warning text-background',
-      'REDUCE_OR_WAIT': 'bg-orange-risk text-white',
-      'BLOCK': 'bg-danger text-white'
-    };
-
-    const labels = {
-      'APPROVE': 'APPROVE',
-      'CAUTION': 'CAUTION',
-      'REDUCE_OR_WAIT': 'REDUCE / WAIT',
-      'BLOCK': 'BLOCK'
-    };
-
-    return (
-      <Badge className={`${variants[decision]} px-4 py-2 text-sm font-medium rounded-lg border-0`}>
-        {labels[decision]}
-      </Badge>
-    );
-  };
-
-  const getScoreDescription = (score: number) => {
-    if (score >= 76) return 'Critical Risk';
-    if (score >= 51) return 'High Risk';
-    if (score >= 26) return 'Moderate Risk';
-    return 'Low Risk';
-  };
-
-  const getConfidenceColor = (confidence: number) => {
-    if (confidence >= 0.8) return 'bg-success';
-    if (confidence >= 0.6) return 'bg-primary';
-    if (confidence >= 0.4) return 'bg-warning';
-    return 'bg-danger';
-  };
 
   return (
     <Card className="terminal-card w-full">
@@ -63,18 +31,20 @@ export function RiskScoreCard({ riskScore, decision, confidence, calibration, re
       </CardHeader>
       <CardContent className="text-center space-y-6">
         <div className="space-y-4">
-          <div className={`text-7xl font-bold ${getScoreColor(riskScore)}`}>
+          <div className={`text-7xl font-bold ${RISK_BAND_TEXT_CLASS[band]}`}>
             {riskScore}
           </div>
           <div className="text-label">Risk Score out of 100</div>
-          <div className={`text-lg font-medium ${getScoreColor(riskScore)}`}>
-            {getScoreDescription(riskScore)}
+          <div className={`text-lg font-medium ${RISK_BAND_TEXT_CLASS[band]}`}>
+            {RISK_BAND_LABEL[band]}
           </div>
         </div>
 
         <div className="space-y-3">
           <div className="text-label">Decision</div>
-          {getDecisionBadge(decision)}
+          <Badge className={`${decisionBadgeClass(decision)} px-4 py-2 text-sm font-medium rounded-lg border-0`}>
+            {decisionLabel(decision)}
+          </Badge>
         </div>
 
         <div className="space-y-3">
@@ -82,7 +52,7 @@ export function RiskScoreCard({ riskScore, decision, confidence, calibration, re
           <div className="flex items-center justify-center space-x-3">
             <div className="w-32 bg-surface rounded-full h-2 overflow-hidden">
               <div 
-                className={`h-2 rounded-full transition-all duration-500 ${getConfidenceColor(confidence)}`}
+                className={`h-2 rounded-full transition-all duration-500 ${confidenceColor(confidence)}`}
                 style={{ width: `${confidence * 100}%` }}
               />
             </div>

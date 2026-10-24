@@ -47,10 +47,10 @@ export function ValidationMetrics({ aggregate, methodology }: ValidationMetricsP
           tone="danger"
         />
         <StatCard
-          label="Estimated loss avoided"
+          label="Modelled notional flagged"
           value={`$${aggregate.estimatedLossAvoidedUsd.toLocaleString()}`}
-          sub={`Sum of |adverse move| × $${aggregate.assumedPositionSizeUsd.toLocaleString()} over Good Block / Reduce-Wait-Correct rows`}
-          tone="success"
+          sub={`NOT money saved. Sum of |adverse move| × $${aggregate.assumedPositionSizeUsd.toLocaleString()} across correctly-flagged BLOCK / Reduce-Wait rows — assumes you sized every one of those positions identically and actually held to the exit`}
+          tone="default"
         />
       </div>
 

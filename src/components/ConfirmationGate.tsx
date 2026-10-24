@@ -1,10 +1,12 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { TradeInput, Decision } from '@/lib/riskEngine';
+import { RISK_BAND_BADGE_CLASS, RISK_BAND_LABEL, riskBand } from '@/lib/riskBand';
+import { gateActions } from '@/lib/confirmationGate';
 
 interface ConfirmationGateProps {
   tradeInput: TradeInput;
@@ -14,12 +16,19 @@ interface ConfirmationGateProps {
   onReduceSize: () => void;
 }
 
+const REDUCE_HINT_ID = 'confirmation-gate-reduce-hint';
+
 /**
  * Safety rule: BLOCK never reaches execution — no override exists, not even behind
  * checkboxes. REDUCE_OR_WAIT can only proceed by actually reducing size and
  * re-running analysis (onReduceSize), never by confirming through on the same
  * oversized trade. Neither path calls an "execute" callback — this component only
  * ever cancels or redirects into a fresh, smaller analysis.
+ *
+ * This card is deliberately rendered *alongside* the score, the risk factors and the
+ * explanation rather than in place of them. It used to be the only thing on screen at
+ * scores >= 51, which meant the user was asked to tick "I understand the risk factors
+ * identified" with every risk factor unmounted.
  */
 export function ConfirmationGate({
   tradeInput,
@@ -34,6 +43,13 @@ export function ConfirmationGate({
     acceptLoss: false,
   });
 
+  // The gate appears mid-page, after the user has already read past the score card.
+  // Without this, nothing tells a screen-reader user that the page changed underneath them.
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    headingRef.current?.focus();
+  }, []);
+
   const allConfirmed = Object.values(confirmations).every(Boolean);
   const isBlocked = decision === 'BLOCK';
 
@@ -44,19 +60,17 @@ export function ConfirmationGate({
     }));
   };
 
-  const getRiskBadge = () => {
-    if (riskScore >= 76) return <Badge className="bg-danger text-white">Critical Risk</Badge>;
-    if (riskScore >= 51) return <Badge className="bg-orange-risk text-white">High Risk</Badge>;
-    if (riskScore >= 26) return <Badge className="bg-warning text-background">Moderate Risk</Badge>;
-    return <Badge className="bg-success text-background">Low Risk</Badge>;
-  };
+  const band = riskBand(riskScore);
+  const actions = gateActions(decision, allConfirmed);
 
   return (
     <Card className="terminal-card w-full max-w-2xl mx-auto border-danger/30">
       <CardHeader className="bg-danger/5">
         <CardTitle className="flex items-center justify-between">
-          <span className="text-card-heading">{isBlocked ? 'Trade Blocked' : 'High-Risk Trade Confirmation'}</span>
-          {getRiskBadge()}
+          <span ref={headingRef} tabIndex={-1} className="text-card-heading">
+            {isBlocked ? 'Trade Blocked' : 'High-Risk Trade Confirmation'}
+          </span>
+          <Badge className={RISK_BAND_BADGE_CLASS[band]}>{RISK_BAND_LABEL[band]}</Badge>
         </CardTitle>
       </CardHeader>
       <CardContent className="pt-6 space-y-6">
@@ -71,7 +85,13 @@ export function ConfirmationGate({
           </p>
         </div>
 
-        {!isBlocked && (
+        {/* Points at the evidence the confirmations refer to. */}
+        <p className="text-xs text-text-secondary">
+          Review the score breakdown and the factors driving this decision before confirming —
+          in Simple Mode, expand the full breakdown above.
+        </p>
+
+        {actions.requiresConfirmations && (
           <div className="space-y-4">
             <h4 className="text-card-heading">Please confirm you understand, before reducing size:</h4>
 
@@ -121,16 +141,27 @@ export function ConfirmationGate({
             Cancel Trade
           </Button>
 
-          {!isBlocked && (
+          {/* Offered for BLOCK as well. The BLOCK copy above tells the user to reduce the size
+              and re-run, but only "Cancel Trade" was offered — a dead end. Moving to a smaller
+              position cannot weaken safety: the engine re-scores it and BLOCK still has no
+              execution override. */}
+          {actions.canReduce && (
             <Button
               onClick={onReduceSize}
-              disabled={!allConfirmed}
+              disabled={!actions.canReduceNow}
+              aria-describedby={!actions.canReduceNow ? REDUCE_HINT_ID : undefined}
               className="flex-1 btn-primary"
             >
               Reduce Size &amp; Re-analyze
             </Button>
           )}
         </div>
+
+        {!actions.canReduceNow && (
+          <p id={REDUCE_HINT_ID} className="text-xs text-text-secondary">
+            Tick all three confirmations above to enable re-analysis at a reduced size.
+          </p>
+        )}
       </CardContent>
     </Card>
   );

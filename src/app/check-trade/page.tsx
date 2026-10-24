@@ -1,7 +1,8 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
+import { SiteNav } from '@/components/SiteNav';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -12,11 +13,24 @@ import { RiskFactorsList } from '@/components/RiskFactorsList';
 import { RiskExplanationBox } from '@/components/RiskExplanationBox';
 import { ConfirmationGate } from '@/components/ConfirmationGate';
 import { SoDEXOrderPlacement } from '@/components/SoDEXOrderPlacement';
-import { TradeInput, RiskAnalysis } from '@/lib/riskEngine';
+import { TradeInput, RiskAnalysis, saferPositionAmount } from '@/lib/riskEngine';
 import { RiskExplanation } from '@/lib/riskExplanation';
 import { storageManager, WatchlistItem, SavedReport } from '@/lib/storage';
 import { pdfGenerator, RiskReportData } from '@/lib/pdfGenerator';
 import { toast } from '@/lib/toast';
+import { toTradeCheckRows, type TradeCheckRow } from '@/lib/tradeCheckRow';
+import { mapAnalyzeError } from '@/lib/analyzeErrors';
+import { buildDataDisclosure } from '@/lib/dataDisclosure';
+import {
+  DECISION_HEADLINE,
+  DECISION_PANEL_CLASS,
+  DECISION_TEXT_CLASS,
+  decisionLabel,
+  decisionTint,
+} from '@/lib/riskBand';
+
+/** How many stored reports the "Recent Risk Checks" table shows. */
+const RECENT_REPORT_LIMIT = 5;
 
 function savedReportFieldsFromApiResult(result: {
   tradeInput: TradeInput;
@@ -59,41 +73,81 @@ interface AnalysisResult {
   dataSourcesReport?: RiskAnalysis['dataSourcesReport'];
 }
 
-const LOAD_STEPS = [
-  { id: 'soso', label: 'Fetching SoSoValue market intelligence...' },
-  { id: 'sodex', label: 'Fetching SoDEX orderbook & liquidity...' },
-  { id: 'score', label: 'Computing risk score...' },
-  { id: 'explain', label: 'Generating risk explanation...' },
-];
+/**
+ * Overall client-side budget for one analysis. The server can spend up to 8s on each SoSoValue
+ * request and 8s on each SoDEX request, so this is deliberately generous — its job is to guarantee
+ * the spinner always terminates, not to be the primary timeout.
+ */
+const CLIENT_ANALYSIS_TIMEOUT_MS = 30_000;
+
+/** Ticks once a second while a request is in flight, purely to show real elapsed time. */
+const ELAPSED_TICK_MS = 1000;
 
 export default function CheckTradePage() {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
-  const [loadStep, setLoadStep] = useState(0);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [beginnerMode, setBeginnerMode] = useState(false);
   const [beginnerSymbol, setBeginnerSymbol] = useState('');
+  const [beginnerQuery, setBeginnerQuery] = useState('');
+  const [beginnerDropdownOpen, setBeginnerDropdownOpen] = useState(false);
   const [beginnerAmount, setBeginnerAmount] = useState('');
+  const [currencies, setCurrencies] = useState<{ symbol: string; name: string }[]>([]);
+  const beginnerComboRef = useRef<HTMLDivElement>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
   const [showConfirmation, setShowConfirmation] = useState(false);
   const [currentTrade, setCurrentTrade] = useState<TradeInput | null>(null);
   const [watchlist, setWatchlist] = useState<WatchlistItem[]>([]);
-  const [recentReports, setRecentReports] = useState<SavedReport[]>([]);
+  const [recentReports, setRecentReports] = useState<TradeCheckRow[]>([]);
+  /** Aborts the in-flight request. Also drives the Cancel button. */
+  const abortRef = useRef<AbortController | null>(null);
+
+  // Which factors in the displayed score are neutral placeholders rather than measurements.
+  // Derived, so it can never disagree with the analysis it describes.
+  const dataDisclosure = buildDataDisclosure(
+    analysisResult?.riskAnalysis.estimatedFactors,
+    analysisResult?.riskAnalysis.marketFactors,
+    !!analysisResult?.apiStatus?.sodexConnected
+  );
 
   // Load saved data on component mount. Must run in an effect (not a lazy useState
   // initializer) since localStorage isn't available during SSR — reading it eagerly
   // would mismatch the server-rendered HTML.
+  // One place decides what "recent" means and how a stored report becomes a table row.
+  const refreshRecentReports = () =>
+    setRecentReports(toTradeCheckRows(storageManager.getReports(), RECENT_REPORT_LIMIT));
+
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- SSR-safe localStorage hydration, not derived state
     setWatchlist(storageManager.getWatchlist());
-    setRecentReports(storageManager.getReports().slice(0, 5));
+    refreshRecentReports();
+  }, []);
+
+  // Fetch supported currencies for symbol combobox
+  useEffect(() => {
+    fetch('/api/sosovalue/currencies')
+      .then((r) => r.json())
+      .then((d) => { if (Array.isArray(d.currencies)) setCurrencies(d.currencies); })
+      .catch(() => {});
+  }, []);
+
+  // Close beginner combobox on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (beginnerComboRef.current && !beginnerComboRef.current.contains(e.target as Node)) {
+        setBeginnerDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
   }, []);
 
   // Refresh data when window gains focus (in case data was changed in another tab)
   useEffect(() => {
     const handleFocus = () => {
       setWatchlist(storageManager.getWatchlist());
-      setRecentReports(storageManager.getReports().slice(0, 5));
+      refreshRecentReports();
     };
 
     window.addEventListener('focus', handleFocus);
@@ -102,8 +156,7 @@ export default function CheckTradePage() {
 
   const handleBeginnerSubmit = () => {
     const sym = beginnerSymbol.trim().toUpperCase();
-    const amt = parseFloat(beginnerAmount);
-    if (!sym || !/^[A-Z]{2,10}$/.test(sym)) {
+    const amt = parseFloat(beginnerAmount);    if (!sym || !/^[A-Z]{2,10}$/.test(sym)) {
       toast.error('Enter a valid symbol (e.g. BTC, ETH, SOL).');
       return;
     }
@@ -115,16 +168,30 @@ export default function CheckTradePage() {
   };
 
   const handleTradeSubmit = async (tradeInput: TradeInput) => {
+    // A previous run may still be in flight (the reduce-and-re-analyze path, or a double submit).
+    // Abort it so two responses can't race to set state.
+    abortRef.current?.abort();
+
     setIsLoading(true);
-    setLoadStep(0);
-    setAnalysisResult(null);
+    setElapsedSeconds(0);
+    // The previous result is deliberately NOT cleared here. If this run fails, the user keeps
+    // the analysis they were reading instead of being dropped back to an empty page.
     setShowConfirmation(false);
     setCurrentTrade(tradeInput);
 
-    // Advance loading steps on a simple timer so users see progress
-    const stepTimer = setInterval(() => {
-      setLoadStep((s) => (s < LOAD_STEPS.length - 1 ? s + 1 : s));
-    }, 1800);
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const timedOut = { value: false };
+    const deadline = setTimeout(() => {
+      timedOut.value = true;
+      controller.abort();
+    }, CLIENT_ANALYSIS_TIMEOUT_MS);
+
+    // Real elapsed time, unlike the previous fixed 1.8s-step timer that advanced regardless of
+    // what the server was doing and so never reflected reality.
+    const elapsedTimer = setInterval(() => {
+      setElapsedSeconds((s) => s + 1);
+    }, ELAPSED_TICK_MS);
 
     try {
       const response = await fetch('/api/analyze-trade', {
@@ -133,11 +200,16 @@ export default function CheckTradePage() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(tradeInput),
+        signal: controller.signal,
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to analyze trade');
+        // Kept as a structured failure rather than an Error carrying only a message, so the
+        // mapping below can key off the server's errorType instead of guessing from text.
+        throw await response
+          .json()
+          .catch(() => ({ error: `Request failed with status ${response.status}` }))
+          .then((body) => Object.assign(body, { status: response.status }));
       }
 
       const result = await response.json();
@@ -145,7 +217,7 @@ export default function CheckTradePage() {
 
       try {
         storageManager.saveReport(savedReportFieldsFromApiResult(result));
-        setRecentReports(storageManager.getReports().slice(0, 5));
+        refreshRecentReports();
       } catch (e) {
         console.error('Failed to persist analysis to localStorage', e);
       }
@@ -156,40 +228,51 @@ export default function CheckTradePage() {
       }
 
     } catch (error) {
-      console.error('Analysis error:', error);
-      
-      if (error instanceof Error) {
-        if (error.message.includes('Symbol') && error.message.includes('not found')) {
-          toast.error('Symbol not found on SoDEX exchange. Please verify the symbol exists.');
-        } else if (
-          error.message.includes('SOSOVALUE_API_KEY') ||
-          error.message.includes('SoSoValue') ||
-          error.message.includes('API Key')
-        ) {
-          toast.error(
-            'Live SoSoValue data is not configured. Add SOSOVALUE_API_KEY to .env.local and restart the dev server.'
-          );
-        } else if (error.message.includes('SoDEX') || error.message.includes('orderbook')) {
-          toast.error(`SoDEX data error: ${error.message}`);
-        } else if (error.message.includes('Market data is temporarily unavailable')) {
-          toast.error('Market data is temporarily unavailable. Please try again later.');
-        } else {
-          toast.error(`Analysis failed: ${error.message}`);
-        }
-      } else {
-        toast.error('Failed to analyze trade. Please try again.');
+      const cancelled = error instanceof DOMException && error.name === 'AbortError' && !timedOut.value;
+      if (!cancelled) {
+        console.error('Analysis error:', error);
+      }
+
+      const payload =
+        error && typeof error === 'object' && 'errorType' in error
+          ? (error as Record<string, unknown>)
+          : { error: error instanceof Error ? error.message : undefined };
+
+      const info = mapAnalyzeError(payload, {
+        symbol: tradeInput.symbol,
+        cancelled,
+        timedOut: timedOut.value,
+      });
+
+      // Errors are actionable, so they need longer than the 4s default to read and act on.
+      toast.error(info.message, 8000);
+      if (info.detail && !cancelled) {
+        toast.show('info', info.detail, 9000);
       }
     } finally {
-      clearInterval(stepTimer);
-      setLoadStep(LOAD_STEPS.length - 1);
+      clearTimeout(deadline);
+      clearInterval(elapsedTimer);
+      abortRef.current = null;
       setIsLoading(false);
     }
   };
 
+  const handleCancelAnalysis = () => {
+    abortRef.current?.abort();
+  };
+
   const handleReduceSize = () => {
     if (!analysisResult) return;
-    
-    const reducedAmount = Math.round(analysisResult.tradeInput.amount * 0.5);
+
+    // Reduce to the amount the report recommends rather than a hardcoded halving, so the number
+    // the user is moved to is the one shown next to the recommendation. The gate only appears above
+    // a score of 50, so the engine always has a number here; the fallback only guards a future
+    // threshold change, and picks the more conservative of the two.
+    const suggested = saferPositionAmount(
+      analysisResult.tradeInput.amount,
+      analysisResult.riskAnalysis.riskScore
+    );
+    const reducedAmount = Math.round(suggested ?? analysisResult.tradeInput.amount * 0.5);
     const reducedInput = {
       ...analysisResult.tradeInput,
       amount: reducedAmount,
@@ -211,7 +294,7 @@ export default function CheckTradePage() {
         (reports[0]?.symbol === analysisResult.tradeInput.symbol ? reports[0] : null);
       if (match) {
         storageManager.updateReportStatus(match.id, 'cancelled');
-        setRecentReports(storageManager.getReports().slice(0, 5));
+        refreshRecentReports();
       }
     }
   };
@@ -249,7 +332,7 @@ export default function CheckTradePage() {
     if (result.success) {
       toast.success(result.message);
       // Refresh recent reports state immediately after saving
-      setRecentReports(storageManager.getReports().slice(0, 5));
+      refreshRecentReports();
     } else {
       toast.error(result.message);
     }
@@ -291,7 +374,9 @@ export default function CheckTradePage() {
         action: analysisResult.tradeInput.action,
         amount: analysisResult.tradeInput.amount,
         holdingPeriod: analysisResult.tradeInput.holdingPeriod,
-        riskProfile: analysisResult.tradeInput.riskProfile,
+        riskProfile: analysisResult.riskAnalysis.riskProfile || analysisResult.tradeInput.riskProfile,
+        riskProfileConfig: analysisResult.riskAnalysis.riskProfileConfig,
+        riskProfileIsCustom: analysisResult.riskAnalysis.riskProfileIsCustom,
         riskScore: analysisResult.riskAnalysis.riskScore,
         decision: analysisResult.riskAnalysis.decision,
         riskFactors: analysisResult.riskAnalysis.marketFactors,
@@ -323,7 +408,9 @@ export default function CheckTradePage() {
         action: analysisResult.tradeInput.action,
         amount: analysisResult.tradeInput.amount,
         holdingPeriod: analysisResult.tradeInput.holdingPeriod,
-        riskProfile: analysisResult.tradeInput.riskProfile,
+        riskProfile: analysisResult.riskAnalysis.riskProfile || analysisResult.tradeInput.riskProfile,
+        riskProfileConfig: analysisResult.riskAnalysis.riskProfileConfig,
+        riskProfileIsCustom: analysisResult.riskAnalysis.riskProfileIsCustom,
         riskScore: analysisResult.riskAnalysis.riskScore,
         decision: analysisResult.riskAnalysis.decision,
         riskFactors: analysisResult.riskAnalysis.marketFactors,
@@ -385,34 +472,19 @@ export default function CheckTradePage() {
     }
   };
 
-  const getDecisionBadge = (decision: string) => {
-    const variants = {
-      'APPROVE': 'bg-success/10 text-success border-success/30',
-      'CAUTION': 'bg-warning/10 text-warning border-warning/30',
-      'REDUCE_OR_WAIT': 'bg-orange-risk/10 text-orange-risk border-orange-risk/30',
-      'BLOCK': 'bg-danger/10 text-danger border-danger/30'
-    };
-    return variants[decision as keyof typeof variants] || 'bg-surface text-text-primary border-border';
-  };
-
   return (
     <div className="min-h-screen bg-background">
       {/* Navigation */}
-      <nav className="terminal-navbar sticky top-0 z-50 backdrop-blur-sm">
-        <div className="max-w-7xl mx-auto px-4 h-full flex items-center justify-between">
-          <Link href="/" className="logo-text text-xl">
-            tradefirewall<span className="logo-underscore">_</span>
+      <SiteNav
+        actions={
+          <Link href="/dashboard">
+            <Button className="btn-secondary px-4 py-2 text-sm">Dashboard</Button>
           </Link>
-          <div className="flex items-center space-x-4">
-            <Link href="/dashboard">
-              <Button className="btn-secondary px-4 py-2 text-sm">Dashboard</Button>
-            </Link>
-          </div>
-        </div>
-      </nav>
+        }
+      />
 
       {/* Main Grid Layout */}
-      <div className="max-w-7xl mx-auto px-4 py-8">
+      <main className="max-w-7xl mx-auto px-4 py-8">
         <div className="grid grid-cols-12 gap-6">
           
           {/* Page Header - Full Width */}
@@ -425,7 +497,9 @@ export default function CheckTradePage() {
                 </p>
               </div>
               <div className="flex flex-col sm:flex-row gap-4">
-                <Button onClick={handleNewAnalysis} className="btn-primary px-6 py-2">New Analysis</Button>
+                <Button onClick={handleNewAnalysis} className="btn-primary px-6 py-2">
+                  New Analysis
+                </Button>
                 <Button onClick={handleViewPreviousReports} className="btn-secondary px-6 py-2">View Previous Reports</Button>
               </div>
             </div>
@@ -459,18 +533,54 @@ export default function CheckTradePage() {
                 </CardHeader>
                 <CardContent className="space-y-6">
                   <div className="space-y-1">
-                    <label className="text-sm font-medium text-text-secondary">Step 1 — Which token?</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. BTC, ETH, SOL"
-                      value={beginnerSymbol}
-                      onChange={e => setBeginnerSymbol(e.target.value.toUpperCase())}
-                      className="w-full px-4 py-3 bg-surface border border-border rounded-lg text-text-primary text-lg font-mono focus:outline-none focus:border-primary"
-                    />
+                    <label htmlFor="beginner-symbol" className="text-sm font-medium text-text-secondary">Step 1 — Which token?</label>
+                    <div className="relative" ref={beginnerComboRef}>
+                      <input
+                        id="beginner-symbol"
+                        type="text"
+                        autoComplete="off"
+                        placeholder="Search BTC, ETH, SOL…"
+                        value={beginnerQuery}
+                        onChange={(e) => {
+                          const val = e.target.value.toUpperCase();
+                          setBeginnerQuery(val);
+                          setBeginnerSymbol(val);
+                          setBeginnerDropdownOpen(true);
+                        }}
+                        onFocus={() => setBeginnerDropdownOpen(true)}
+                        className="w-full px-4 py-3 bg-surface border border-border rounded-lg text-text-primary text-lg font-mono focus:outline-none focus:border-primary"
+                      />
+                      {beginnerDropdownOpen && currencies.length > 0 && (
+                        <ul className="absolute z-50 mt-1 w-full max-h-52 overflow-auto rounded-lg border border-border bg-card shadow-lg">
+                          {currencies
+                            .filter((c) =>
+                              beginnerQuery.length === 0 ||
+                              c.symbol.toLowerCase().includes(beginnerQuery.toLowerCase()) ||
+                              c.name.toLowerCase().includes(beginnerQuery.toLowerCase())
+                            )
+                            .slice(0, 50)
+                            .map((c) => (
+                              <li
+                                key={c.symbol}
+                                onMouseDown={() => {
+                                  setBeginnerSymbol(c.symbol);
+                                  setBeginnerQuery(c.symbol);
+                                  setBeginnerDropdownOpen(false);
+                                }}
+                                className="flex items-center justify-between px-4 py-2.5 cursor-pointer text-sm hover:bg-surface text-text-primary"
+                              >
+                                <span className="font-mono font-semibold">{c.symbol}</span>
+                                <span className="text-text-secondary truncate ml-3 text-xs">{c.name}</span>
+                              </li>
+                            ))}
+                        </ul>
+                      )}
+                    </div>
                   </div>
                   <div className="space-y-1">
-                    <label className="text-sm font-medium text-text-secondary">Step 2 — How much? (USD)</label>
+                    <label htmlFor="beginner-amount" className="text-sm font-medium text-text-secondary">Step 2 — How much? (USD)</label>
                     <input
+                      id="beginner-amount"
                       type="number"
                       placeholder="e.g. 1000"
                       value={beginnerAmount}
@@ -540,7 +650,7 @@ export default function CheckTradePage() {
           </div>
 
           {/* Live integrations proof */}
-          {analysisResult && (
+          {analysisResult && !isLoading && (
             <div className="col-span-12 grid grid-cols-1 lg:grid-cols-3 gap-4">
               <Card className="terminal-card border-primary/20">
                 <CardHeader className="pb-2">
@@ -575,7 +685,11 @@ export default function CheckTradePage() {
                     </span>
                   </div>
                   <p className="text-xs text-text-secondary">
-                    Risk score is computed only after both providers return live payloads for this symbol.
+                    {buildDataDisclosure(
+                      analysisResult.riskAnalysis.estimatedFactors,
+                      analysisResult.riskAnalysis.marketFactors,
+                      !!analysisResult.apiStatus?.sodexConnected
+                    ).summary}
                   </p>
                 </CardContent>
               </Card>
@@ -653,33 +767,48 @@ export default function CheckTradePage() {
             <div className="col-span-12">
               <Card className="terminal-card border-primary/20">
                 <CardContent className="py-12">
-                  <div className="max-w-sm mx-auto space-y-6">
+                  <div
+                    className="max-w-sm mx-auto space-y-6"
+                    role="status"
+                    aria-live="polite"
+                    aria-busy="true"
+                  >
                     <div className="text-center">
-                      <div className="w-10 h-10 border-2 border-primary/30 border-t-primary rounded-full animate-spin mx-auto mb-4"></div>
-                      <p className="text-text-primary font-medium">Running live analysis…</p>
-                      <p className="text-xs text-text-secondary mt-1">Connecting to SoSoValue &amp; SoDEX APIs</p>
+                      <div
+                        className="w-10 h-10 border-2 border-primary/30 border-t-primary rounded-full animate-spin mx-auto mb-4"
+                        aria-hidden="true"
+                      ></div>
+                      <p className="text-text-primary font-medium">
+                        Analysing {currentTrade?.symbol ?? 'trade'}…
+                      </p>
+                      <p className="text-xs text-text-secondary mt-1">
+                        Fetching live market data from SoSoValue and SoDEX
+                      </p>
+                      {/* Real elapsed time. The previous four-step list advanced on a fixed
+                          1.8s timer no matter what the server was doing, so the stage names
+                          never meant anything. */}
+                      <p className="text-xs text-text-muted mt-1 tabular-nums">
+                        {elapsedSeconds}s elapsed
+                      </p>
                     </div>
-                    <div className="space-y-3">
-                      {LOAD_STEPS.map((step, i) => (
-                        <div key={step.id} className="flex items-center gap-3">
-                          <div className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 border ${
-                            i < loadStep ? 'bg-success border-success' :
-                            i === loadStep ? 'border-primary bg-primary/10' :
-                            'border-border'
-                          }`}>
-                            {i < loadStep ? (
-                              <span className="text-background text-xs">✓</span>
-                            ) : i === loadStep ? (
-                              <div className="w-2 h-2 bg-primary rounded-full animate-pulse"></div>
-                            ) : null}
-                          </div>
-                          <span className={`text-sm ${
-                            i < loadStep ? 'text-success line-through opacity-60' :
-                            i === loadStep ? 'text-text-primary' :
-                            'text-text-secondary'
-                          }`}>{step.label}</span>
-                        </div>
-                      ))}
+
+                    {/* Indeterminate, because the progress genuinely is unknown until the
+                        response arrives. */}
+                    <div
+                      className="h-1 w-full bg-surface rounded-full overflow-hidden"
+                      aria-hidden="true"
+                    >
+                      <div className="h-full w-1/3 bg-primary rounded-full animate-pulse"></div>
+                    </div>
+
+                    <div className="text-center">
+                      <Button
+                        variant="secondary"
+                        onClick={handleCancelAnalysis}
+                        className="text-sm"
+                      >
+                        Cancel
+                      </Button>
                     </div>
                   </div>
                 </CardContent>
@@ -688,7 +817,7 @@ export default function CheckTradePage() {
           )}
 
           {/* Risk Score Card - Left */}
-          {analysisResult && !showConfirmation && (!beginnerMode || showAdvanced) && (
+          {analysisResult && !isLoading && (!beginnerMode || showAdvanced) && (
             <div className="col-span-12 lg:col-span-4">
               <RiskScoreCard
                 riskScore={analysisResult.riskAnalysis.riskScore}
@@ -700,8 +829,47 @@ export default function CheckTradePage() {
             </div>
           )}
 
+          {/* Data coverage disclosure - spans full width directly under the score, because a
+              score built partly on neutral placeholders should not read like a confident reading
+              of the market. */}
+          {analysisResult && !isLoading && !dataDisclosure.complete && (
+            <div className="col-span-12">
+              <div
+                role="note"
+                className="p-4 rounded-lg border border-warning/30 bg-warning/5 flex gap-3"
+              >
+                <svg
+                  aria-hidden="true"
+                  viewBox="0 0 20 20"
+                  fill="currentColor"
+                  className="w-5 h-5 flex-shrink-0 text-warning mt-0.5"
+                >
+                  <path
+                    fillRule="evenodd"
+                    d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.166-.168 2.625-1.515 2.625H3.72c-1.347 0-2.188-1.459-1.515-2.625l6.28-10.875zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z"
+                    clipRule="evenodd"
+                  />
+                </svg>
+                <div className="text-sm">
+                  <p className="font-medium text-text-primary mb-1">
+                    Part of this score is estimated, not measured
+                  </p>
+                  <p className="text-text-secondary">{dataDisclosure.impact}</p>
+                  <ul className="mt-2 space-y-1 text-text-secondary">
+                    {dataDisclosure.estimated.map((f) => (
+                      <li key={f.key}>
+                        <span className="text-text-primary font-medium">{f.label}</span> — {f.reason}
+                        , shown as a neutral {f.score}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Recommended Action - Right */}
-          {analysisResult && !showConfirmation && (!beginnerMode || showAdvanced) && (
+          {analysisResult && !isLoading && (!beginnerMode || showAdvanced) && (
             <div className="col-span-12 lg:col-span-8">
               <Card className="terminal-card">
                 <CardHeader>
@@ -739,7 +907,7 @@ export default function CheckTradePage() {
           )}
 
           {/* SoDEX Testnet Execution - Full Width */}
-          {analysisResult && !showConfirmation && (!beginnerMode || showAdvanced) && (
+          {analysisResult && !isLoading && !showConfirmation && (!beginnerMode || showAdvanced) && (
             <div className="col-span-12">
               <SoDEXOrderPlacement
                 tradeInput={analysisResult.tradeInput}
@@ -750,36 +918,18 @@ export default function CheckTradePage() {
           )}
 
           {/* Beginner simple result card */}
-          {analysisResult && !showConfirmation && beginnerMode && (
+          {analysisResult && !isLoading && beginnerMode && (
             <div className="col-span-12">
               {(() => {
                 const { decision, riskScore, saferAction } = analysisResult.riskAnalysis;
-                const colors: Record<string, string> = {
-                  APPROVE: 'border-success/40 bg-success/5',
-                  CAUTION: 'border-warning/40 bg-warning/5',
-                  REDUCE_OR_WAIT: 'border-orange-risk/40 bg-orange-risk/5',
-                  BLOCK: 'border-danger/40 bg-danger/5',
-                };
-                const textColors: Record<string, string> = {
-                  APPROVE: 'text-success',
-                  CAUTION: 'text-warning',
-                  REDUCE_OR_WAIT: 'text-orange-risk',
-                  BLOCK: 'text-danger',
-                };
-                const labels: Record<string, string> = {
-                  APPROVE: '✅ Safe to Proceed',
-                  CAUTION: '⚠️ Proceed with Caution',
-                  REDUCE_OR_WAIT: '🔻 Reduce Size or Wait',
-                  BLOCK: '🚫 Avoid This Trade',
-                };
                 return (
-                  <Card className={`terminal-card ${colors[decision] ?? ''}`}>
+                  <Card className={`terminal-card ${DECISION_PANEL_CLASS[decision]}`}>
                     <CardContent className="py-8 text-center space-y-4">
-                      <div className={`text-5xl font-bold ${textColors[decision]}`}>
+                      <div className={`text-5xl font-bold ${DECISION_TEXT_CLASS[decision]}`}>
                         {riskScore}/100
                       </div>
-                      <div className={`text-2xl font-semibold ${textColors[decision]}`}>
-                        {labels[decision] ?? decision}
+                      <div className={`text-2xl font-semibold ${DECISION_TEXT_CLASS[decision]}`}>
+                        {DECISION_HEADLINE[decision]}
                       </div>
                       <p className="text-body max-w-lg mx-auto">{saferAction}</p>
                       <button
@@ -796,7 +946,7 @@ export default function CheckTradePage() {
           )}
 
           {/* Risk Breakdown - Full Width */}
-          {analysisResult && !showConfirmation && (!beginnerMode || showAdvanced) && (
+          {analysisResult && !isLoading && (!beginnerMode || showAdvanced) && (
             <div className="col-span-12">
               <RiskFactorsList
                 reasons={analysisResult.riskAnalysis.reasons}
@@ -808,14 +958,14 @@ export default function CheckTradePage() {
           )}
 
           {/* Risk Intelligence Explanation - Full Width */}
-          {analysisResult && !showConfirmation && (!beginnerMode || showAdvanced) && (
+          {analysisResult && !isLoading && (!beginnerMode || showAdvanced) && (
             <div className="col-span-12">
               <RiskExplanationBox explanation={analysisResult.riskExplanation} riskAnalysis={analysisResult.riskAnalysis} />
             </div>
           )}
 
           {/* Confirmation Gate - Full Width */}
-          {showConfirmation && analysisResult && (
+          {showConfirmation && analysisResult && !isLoading && (
             <div className="col-span-12">
               <ConfirmationGate
                 tradeInput={analysisResult.tradeInput}
@@ -888,20 +1038,18 @@ export default function CheckTradePage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {recentReports.map((report) => (
-                          <tr key={report.id} className="border-b border-border">
-                            <td className="py-2 font-medium">{report.symbol}</td>
-                            <td className="py-2 capitalize">{report.action}</td>
-                            <td className="py-2">${report.amount.toLocaleString()}</td>
-                            <td className="py-2">{report.riskScore}/100</td>
+                        {recentReports.map((row) => (
+                          <tr key={row.id} className="border-b border-border">
+                            <td className="py-2 font-medium">{row.asset}</td>
+                            <td className="py-2 capitalize">{row.action}</td>
+                            <td className="py-2">{row.amount}</td>
+                            <td className="py-2">{row.riskScore}/100</td>
                             <td className="py-2">
-                              <Badge className={`${getDecisionBadge(report.decision)} px-2 py-1 text-xs rounded border`}>
-                                {report.decision.replace('_', ' ')}
+                              <Badge className={`${decisionTint(row.decision)} px-2 py-1 text-xs rounded border`}>
+                                {decisionLabel(row.decision)}
                               </Badge>
                             </td>
-                            <td className="py-2 text-text-secondary">
-                              {new Date(report.createdAt).toLocaleDateString()}
-                            </td>
+                            <td className="py-2 text-text-secondary">{row.time}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -920,7 +1068,7 @@ export default function CheckTradePage() {
                   <p className="text-text-secondary text-center py-4">
                     You have {storageManager.getReports().length} saved reports. 
                     <Button 
-                      onClick={() => setRecentReports(storageManager.getReports().slice(0, 5))}
+                      onClick={refreshRecentReports}
                       className="ml-2 btn-secondary text-sm px-3 py-1"
                     >
                       Refresh
@@ -948,7 +1096,7 @@ export default function CheckTradePage() {
           </div>
 
         </div>
-      </div>
+      </main>
     </div>
   );
 }

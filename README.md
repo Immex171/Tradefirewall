@@ -582,25 +582,25 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    A[SoDEX Integration] --> B[Level 1: MVP]
-    A --> C[Level 2: Future]
+    A[SoDEX Integration] --> B[Live Market Data and Preview]
+    A --> C[Testnet Spot Execution]
+    A --> D[Not Implemented]
 
-    B --> D[Public Market Data]
-    B --> E[Ticker]
-    B --> F[Orderbook]
-    B --> G[Klines]
-    B --> H[Recent Trades]
-    B --> I[Slippage Estimate]
-    B --> J[Execution Preview]
+    B --> E[Public Market Data]
+    B --> F[Ticker and Orderbook]
+    B --> G[Klines and Recent Trades]
+    B --> H[Slippage Estimate]
+    B --> I[Execution Preview]
 
-    C --> K[Testnet Order Placement]
-    C --> L[EIP-712 Signing]
-    C --> M[Authenticated Actions]
-    C --> N[Cancel Orders]
-    C --> O[Transfer Assets]
+    C --> J[Wallet EIP-712 Signing]
+    C --> K[Signed Spot Order Placement]
+    D --> L[Perps Execution]
+    D --> M[Builder Approval Lifecycle]
+    D --> N[Builder Earnings and Reconciliation]
+    D --> O[Cancel Orders and Transfers]
 
-    J --> P[No Wallet Required]
-    K --> Q[Wallet + Signature Required]
+    I --> P[No Wallet Required]
+    J --> Q[Wallet Required]
 ```
 
 ---
@@ -626,6 +626,14 @@ flowchart TD
     J --> K[Sign Typed Data]
     K --> L[Testnet Action Only]
 ```
+
+### Builder Codes status
+
+Ordinary signed Spot trades can be submitted to SoDEX Testnet through the existing wallet flow; Builder Codes are optional and are not required to execute those trades. Mainnet execution remains disabled. Builder Codes themselves are not enabled in the application. The Spot order-signing helper supports the documented batch-level `builder: { id, fee }` fragment, including the Spot fee cap (2000 tenths of a basis point), canonical field ordering, and signing hash, but the existing order route and UI do not yet request or submit builder-enabled orders.
+
+The supplied Builder Codes specification does not define the approval write endpoint and request body, nonce acquisition, eligibility-account response schemas, or builder-statistics/trade-history endpoint paths. The project also has no authenticated user/session layer or SoDEX SDK. Consequently, approval, revocation, user consent, Perps signing, fee reconciliation, and builder earnings are intentionally unimplemented; no environment variable can activate them. Do not send a master-wallet private key to the server or assume that a configured builder is approved.
+
+The specification's fee values are integers in tenths of a basis point: Spot is capped at 2000 (2%) and Perps at 200 (0.2%). Approval ceilings and actual fill fees are distinct; only confirmed fill records can establish actual builder fees. No live Builder Codes approval, order, or fill flow has been verified.
 
 ---
 
@@ -1014,7 +1022,7 @@ SODEX_TESTNET_PERPS_URL=https://testnet-gw.sodex.dev/api/v1/perps
 # SODEX_MAINNET_PERPS_URL=https://mainnet-gw.sodex.dev/api/v1/perps
 ```
 
-SoDEX signing keys are **not** used by TradeFirewall for market-data reads or for on-chain execution (execution stays preview-only).
+TradeFirewall does not request or transmit a master-wallet private key. The existing execution path signs Spot orders in the browser wallet and is restricted to SoDEX testnet. Builder approval and revocation are not implemented.
 
 ---
 
@@ -1477,7 +1485,7 @@ All items verified for Wave 2 submission:
 - [x] Illustrative vs. real backtest scenarios clearly labeled, both present on `/validate`
 - [x] Score calibration bands + reliability notes on every risk report, additive to `RiskAnalysis`
 - [x] Testnet execution gate — wallet connect, EIP-712 signed order, real SoDEX testnet submission
-- [x] BLOCK has no execution override; REDUCE_OR_WAIT requires resize + re-analysis (enforced client-side and server-side)
+- [ ] Execution route independently verifies the risk analysis and trade parameters — currently it trusts a client-submitted decision and only rejects `BLOCK`/`REDUCE_OR_WAIT` values; do not treat this as a tamper-resistant server risk gate
 - [x] `npm run typecheck` script added, matches this README's documented command
 - [ ] Full sign → submit → fill round trip confirmed with a live funded testnet wallet (prepare phase verified live; full round trip not yet wallet-tested)
 

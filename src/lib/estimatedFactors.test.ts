@@ -8,19 +8,25 @@ const withSodex = (partial: Record<string, unknown>): SodexAnalysisData =>
   partial as unknown as SodexAnalysisData;
 
 const klines = (n: number) => Array.from({ length: n }, () => ({ close: '100' }));
+const orderbook = {
+  bids: [{ price: '99', quantity: '2' }],
+  asks: [{ price: '101', quantity: '2' }],
+  lastUpdateId: 1,
+};
+const executionPreview = { warnings: [] };
 
 describe('buildEstimatedSodexFactors', () => {
   it('reports nothing estimated when every input is present', () => {
     expect(
       buildEstimatedSodexFactors(
-        withSodex({ klines: klines(30), orderbook: {}, executionPreview: {} })
+        withSodex({ klines: klines(30), orderbook, executionPreview })
       )
     ).toEqual([]);
   });
 
   describe('volatility', () => {
     it('is estimated when klines are missing entirely', () => {
-      const estimated = buildEstimatedSodexFactors(withSodex({ orderbook: {}, executionPreview: {} }));
+      const estimated = buildEstimatedSodexFactors(withSodex({ orderbook, executionPreview }));
       expect(estimated).toContain('volatility');
     });
 
@@ -41,12 +47,12 @@ describe('buildEstimatedSodexFactors', () => {
 
   it('flags liquidity when the orderbook is missing', () => {
     expect(
-      buildEstimatedSodexFactors(withSodex({ klines: klines(30), executionPreview: {} }))
+      buildEstimatedSodexFactors(withSodex({ klines: klines(30), executionPreview }))
     ).toEqual(['liquidity']);
   });
 
   it('flags execution when the execution preview is missing', () => {
-    expect(buildEstimatedSodexFactors(withSodex({ klines: klines(30), orderbook: {} }))).toEqual([
+    expect(buildEstimatedSodexFactors(withSodex({ klines: klines(30), orderbook }))).toEqual([
       'execution',
     ]);
   });
@@ -63,7 +69,7 @@ describe('buildEstimatedSodexFactors', () => {
     // A sector or sentiment factor that legitimately lands on 50 is a measurement. Only inputs
     // that were absent count, which is why this walks the presence checks and not the scores.
     const estimated = buildEstimatedSodexFactors(
-      withSodex({ klines: klines(30), orderbook: {}, executionPreview: {} })
+      withSodex({ klines: klines(30), orderbook, executionPreview })
     );
     expect(estimated).not.toContain('sector');
     expect(estimated).not.toContain('sentiment');

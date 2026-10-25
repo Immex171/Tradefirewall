@@ -17,6 +17,13 @@ export const SODEX_MAINNET_CHAIN_ID = 286623;
 export const OrderSide = { BUY: 1, SELL: 2 } as const;
 export const OrderType = { LIMIT: 1, MARKET: 2 } as const;
 export const TimeInForce = { GTC: 1, FOK: 2, IOC: 3, GTX: 4 } as const;
+export const SODEX_SPOT_MAX_BUILDER_FEE_RATE = 2000;
+const UINT64_MAX = BigInt(2) ** BigInt(64) - BigInt(1);
+
+export interface BuilderOrderParams {
+  id: number | string;
+  fee: number;
+}
 
 export interface BatchNewOrderItemParams {
   symbolID: number;
@@ -32,6 +39,7 @@ export interface BatchNewOrderItemParams {
 export interface BatchNewOrderParams {
   accountID: number;
   orders: BatchNewOrderItemParams[];
+  builder?: BuilderOrderParams;
 }
 
 /** Strips trailing zeros — SoDEX rejects "0.4060", requires "0.406". */
@@ -63,7 +71,21 @@ export function buildBatchNewOrderParams(input: {
   timeInForce: number;
   price?: string;
   quantity?: string;
+  builder?: BuilderOrderParams;
 }): BatchNewOrderParams {
+  if (input.builder !== undefined) {
+    normalizeBuilderAccountID(input.builder.id);
+    if (
+      !Number.isSafeInteger(input.builder.fee) ||
+      input.builder.fee < 0 ||
+      input.builder.fee > SODEX_SPOT_MAX_BUILDER_FEE_RATE
+    ) {
+      throw new Error(
+        `Spot builder fee must be an integer from 0 to ${SODEX_SPOT_MAX_BUILDER_FEE_RATE} in tenths of a basis point`
+      );
+    }
+  }
+
   const item: BatchNewOrderItemParams = {
     symbolID: input.symbolID,
     clOrdID: input.clOrdID,
@@ -73,14 +95,50 @@ export function buildBatchNewOrderParams(input: {
   };
   if (input.price !== undefined) item.price = input.price;
   if (input.quantity !== undefined) item.quantity = input.quantity;
-  return { accountID: input.accountID, orders: [item] };
+  const params: BatchNewOrderParams = { accountID: input.accountID, orders: [item] };
+  if (input.builder !== undefined) {
+    params.builder = { id: input.builder.id, fee: input.builder.fee };
+  }
+  return params;
 }
 
 const BATCH_NEW_ORDER_ACTION_NAME = 'batchNewOrder';
 
+function normalizeBuilderAccountID(id: number | string): string {
+  if (typeof id === 'number') {
+    if (!Number.isSafeInteger(id) || id < 0) {
+      throw new Error('Builder account ID must be a non-negative safe integer or uint64 decimal string');
+    }
+    return String(id);
+  }
+  if (!/^(0|[1-9]\d*)$/.test(id) || BigInt(id) > UINT64_MAX) {
+    throw new Error('Builder account ID must be an unsigned uint64 decimal integer');
+  }
+  return id;
+}
+
+/** Serializes the exact params object used in the signed payload and HTTP body. */
+export function serializeBatchNewOrderParams(params: BatchNewOrderParams): string {
+  if (params.builder === undefined) return JSON.stringify(params);
+
+  const builderID = normalizeBuilderAccountID(params.builder.id);
+  if (
+    !Number.isSafeInteger(params.builder.fee) ||
+    params.builder.fee < 0 ||
+    params.builder.fee > SODEX_SPOT_MAX_BUILDER_FEE_RATE
+  ) {
+    throw new Error(
+      `Spot builder fee must be an integer from 0 to ${SODEX_SPOT_MAX_BUILDER_FEE_RATE} in tenths of a basis point`
+    );
+  }
+
+  const serializedOrders = JSON.stringify({ accountID: params.accountID, orders: params.orders });
+  return `${serializedOrders.slice(0, -1)},"builder":{"id":${builderID},"fee":${params.builder.fee}}}`;
+}
+
 /** payloadHash = keccak256(compact_json({type, params})) — must be byte-identical to Go's json.Marshal. */
 export function computePayloadHash(params: BatchNewOrderParams): `0x${string}` {
-  const compactJson = JSON.stringify({ type: BATCH_NEW_ORDER_ACTION_NAME, params });
+  const compactJson = `{"type":"${BATCH_NEW_ORDER_ACTION_NAME}","params":${serializeBatchNewOrderParams(params)}}`;
   return keccak256(stringToHex(compactJson));
 }
 

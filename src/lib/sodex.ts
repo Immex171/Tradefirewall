@@ -1,5 +1,6 @@
 // SoDEX public REST — https://testnet-gw.sodex.dev/api/v1/spot (default)
 // Responses use `code` + `data`; tickers/orderbooks use exchange-native field names.
+import { getSodexSpotSymbolError } from './sodexSymbols';
 
 export interface SodexSymbol {
   symbol: string;
@@ -59,6 +60,65 @@ export interface SodexTicker {
   firstId: number;
   lastId: number;
   count: number;
+}
+
+export function buildTickerFromKlines(symbol: string, klines: SodexKline[]): SodexTicker | null {
+  const validKlines = klines
+    .filter(
+      (kline) =>
+        Number.isFinite(Number(kline.openTime)) &&
+        Number(kline.openTime) > 0 &&
+        Number.isFinite(Number(kline.open)) &&
+        Number(kline.open) > 0 &&
+        Number.isFinite(Number(kline.close)) &&
+        Number(kline.close) > 0
+    )
+    .sort((a, b) => a.openTime - b.openTime);
+  const latest = validKlines.at(-1);
+  const oldest = validKlines[0];
+  if (!latest || !oldest || !Number.isFinite(Number(latest.close)) || Number(latest.close) <= 0) {
+    return null;
+  }
+
+  const openPrice = Number(oldest.open);
+  const lastPrice = Number(latest.close);
+  const volume = validKlines.reduce((sum, kline) => {
+    const value = Number(kline.volume);
+    return sum + (Number.isFinite(value) && value > 0 ? value : 0);
+  }, 0);
+  const quoteVolume = validKlines.reduce(
+    (sum, kline) => {
+      const value = Number(kline.quoteAssetVolume);
+      return sum + (Number.isFinite(value) && value > 0 ? value : 0);
+    },
+    0
+  );
+  const highPrices = validKlines.map((kline) => Number(kline.high)).filter(Number.isFinite);
+  const lowPrices = validKlines.map((kline) => Number(kline.low)).filter(Number.isFinite);
+
+  return {
+    symbol,
+    priceChange: String(lastPrice - openPrice),
+    priceChangePercent: openPrice > 0 ? String(((lastPrice - openPrice) / openPrice) * 100) : '0',
+    weightedAvgPrice: String(lastPrice),
+    prevClosePrice: String(openPrice),
+    lastPrice: String(lastPrice),
+    lastQty: '0',
+    bidPrice: '0',
+    bidQty: '0',
+    askPrice: '0',
+    askQty: '0',
+    openPrice: String(openPrice),
+    highPrice: String(highPrices.length ? Math.max(...highPrices) : lastPrice),
+    lowPrice: String(lowPrices.length ? Math.min(...lowPrices) : lastPrice),
+    volume: String(volume),
+    quoteVolume: String(quoteVolume),
+    openTime: oldest.openTime,
+    closeTime: latest.closeTime,
+    firstId: 0,
+    lastId: 0,
+    count: validKlines.reduce((sum, kline) => sum + kline.numberOfTrades, 0),
+  };
 }
 
 export interface SodexMiniTicker {
@@ -376,10 +436,14 @@ class SoDEXAPI {
     const sodexSymbol = this.mapSymbolToSodexFormat(symbol);
     const tickers = await this.getSpotTickers();
     const hit = tickers.find((t) => t.symbol === sodexSymbol);
-    if (!hit) {
-      throw new Error(`Ticker for ${symbol} (${sodexSymbol}) not found on SoDEX`);
+    if (hit) return hit;
+
+    const klines = await this.getSpotKlines(symbol, '1h', 24);
+    const fallbackTicker = buildTickerFromKlines(sodexSymbol, klines);
+    if (!fallbackTicker) {
+      throw new Error(`No ticker or usable hourly candle price for ${symbol} (${sodexSymbol}) on SoDEX`);
     }
-    return hit;
+    return fallbackTicker;
   }
 
   async getSpotBookTickers(): Promise<SodexBookTicker[]> {
@@ -398,8 +462,18 @@ class SoDEXAPI {
     const sodexSymbol = this.mapSymbolToSodexFormat(symbol);
     const all = await this.getSpotBookTickers();
     const hit = all.find((b) => b.symbol === sodexSymbol);
-    if (!hit) throw new Error(`Book ticker for ${symbol} (${sodexSymbol}) not found on SoDEX`);
-    return hit;
+    if (hit) return hit;
+
+    const orderbook = await this.getSpotOrderbook(symbol, 100);
+    const bestBid = orderbook.bids[0];
+    const bestAsk = orderbook.asks[0];
+    return {
+      symbol: sodexSymbol,
+      bidPrice: bestBid?.price ?? '0',
+      bidQty: bestBid?.quantity ?? '0',
+      askPrice: bestAsk?.price ?? '0',
+      askQty: bestAsk?.quantity ?? '0',
+    };
   }
 
   async getSpotOrderbook(symbol: string, limit = 100): Promise<SodexOrderbook> {
@@ -462,6 +536,8 @@ class SoDEXAPI {
     quantityPrecision: number;
     minNotional: number;
   }> {
+    const inputError = getSodexSpotSymbolError(symbol);
+    if (inputError) throw new Error(inputError);
     const sodexSymbol = this.mapSymbolToSodexFormat(symbol);
     const rows = await this.getSymbolsRowsCached();
     const row = rows.find((s) => String(s.name ?? '') === sodexSymbol);

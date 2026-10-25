@@ -8,6 +8,7 @@ import {
   calculateHoldingPeriodRisk,
   calculateSentimentRisk,
   calculateSectorRisk,
+  buildEstimatedSodexFactors,
   combineRiskFactors,
   determineDecision,
   saferPositionAmount,
@@ -35,6 +36,35 @@ describe('calculateVolatilityFromKlines', () => {
   it('returns high risk when there is no data', () => {
     expect(calculateVolatilityFromKlines([])).toBe(70);
     expect(calculateVolatilityFromKlines(closes([100]))).toBe(70);
+  });
+
+  describe('buildEstimatedSodexFactors', () => {
+    const usableKlines = [
+      { close: '10', openTime: 1, open: '9', high: '10', low: '9', volume: '1', closeTime: 2, quoteAssetVolume: '9', numberOfTrades: 1, takerBuyBaseAssetVolume: '0', takerBuyQuoteAssetVolume: '0' },
+      { close: '11', openTime: 2, open: '10', high: '11', low: '10', volume: '1', closeTime: 3, quoteAssetVolume: '10', numberOfTrades: 1, takerBuyBaseAssetVolume: '0', takerBuyQuoteAssetVolume: '0' },
+      { close: '12', openTime: 3, open: '11', high: '12', low: '11', volume: '1', closeTime: 4, quoteAssetVolume: '11', numberOfTrades: 1, takerBuyBaseAssetVolume: '0', takerBuyQuoteAssetVolume: '0' },
+    ];
+    const preview = { warnings: [], estimatedSlippage: 0, estimatedFees: 0, priceImpact: 0, executionProbability: 0.5, canExecute: false, mode: 'preview' as const, symbol: 'BTC', side: 'BUY' as const, amount: 100, estimatedPrice: 10, liquidityAnalysis: { totalBidLiquidity: 1, totalAskLiquidity: 1, spreadPercent: 0, marketDepth: 2 } };
+
+    it('marks liquidity and execution as estimated when either book side is empty', () => {
+      expect(buildEstimatedSodexFactors({
+        klines: usableKlines,
+        orderbook: { bids: [{ price: '10', quantity: '1' }], asks: [], lastUpdateId: 1 },
+        executionPreview: { ...preview, warnings: ['SoDEX has no visible ask liquidity'] },
+      })).toEqual(['liquidity', 'execution']);
+    });
+
+    it('does not mark complete order-book measurements as estimated', () => {
+      expect(buildEstimatedSodexFactors({
+        klines: usableKlines,
+        orderbook: {
+          bids: [{ price: '10', quantity: '1' }],
+          asks: [{ price: '11', quantity: '1' }],
+          lastUpdateId: 1,
+        },
+        executionPreview: preview,
+      })).toEqual([]);
+    });
   });
 
   it('returns high risk when a zero close would make returns undefined', () => {

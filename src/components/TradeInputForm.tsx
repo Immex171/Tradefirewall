@@ -15,6 +15,7 @@ import {
   UserCustomRiskProfile,
 } from '@/lib/riskProfiles';
 import { CustomRiskProfileEditor } from '@/components/CustomRiskProfileEditor';
+import { getSodexSpotSymbolError } from '@/lib/sodexSymbols';
 
 interface Currency {
   symbol: string;
@@ -93,12 +94,13 @@ export function TradeInputForm({ onSubmit, isLoading = false }: TradeInputFormPr
   }, []);
 
   const filtered = query.length === 0
-    ? currencies.slice(0, 50)
+    ? currencies.filter((currency) => !getSodexSpotSymbolError(currency.symbol)).slice(0, 50)
     : currencies
         .filter(
           (c) =>
-            c.symbol.toLowerCase().includes(query.toLowerCase()) ||
-            c.name.toLowerCase().includes(query.toLowerCase())
+            !getSodexSpotSymbolError(c.symbol) &&
+            (c.symbol.toLowerCase().includes(query.toLowerCase()) ||
+              c.name.toLowerCase().includes(query.toLowerCase()))
         )
         .slice(0, 50);
 
@@ -164,6 +166,11 @@ export function TradeInputForm({ onSubmit, isLoading = false }: TradeInputFormPr
 
     if (!formData.symbol || !formData.amount) {
       alert('Please fill in all required fields');
+      return;
+    }
+    const symbolError = getSodexSpotSymbolError(formData.symbol);
+    if (symbolError) {
+      alert(symbolError);
       return;
     }
     const amount = parseFloat(formData.amount);
@@ -249,7 +256,14 @@ export function TradeInputForm({ onSubmit, isLoading = false }: TradeInputFormPr
                 )}
               </div>
               {currencies.length > 0 && (
-                <p className="text-xs text-text-secondary">{currencies.length} supported assets</p>
+                <p className="text-xs text-text-secondary">
+                  {currencies.filter((currency) => !getSodexSpotSymbolError(currency.symbol)).length} supported assets
+                </p>
+              )}
+              {getSodexSpotSymbolError(formData.symbol) && (
+                <p role="alert" className="text-xs text-danger">
+                  {getSodexSpotSymbolError(formData.symbol)}
+                </p>
               )}
             </div>
 

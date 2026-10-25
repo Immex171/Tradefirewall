@@ -6,9 +6,11 @@ import {
   OrderSide,
   OrderType,
   TimeInForce,
+  SODEX_SPOT_MAX_BUILDER_FEE_RATE,
   formatDecimalString,
   snapToStep,
   buildBatchNewOrderParams,
+  serializeBatchNewOrderParams,
   computePayloadHash,
   buildExchangeActionTypedData,
   toSodexApiSign,
@@ -140,6 +142,47 @@ describe('buildBatchNewOrderParams', () => {
       'quantity',
     ]);
   });
+
+  it('adds the builder after orders and preserves its id/fee field order', () => {
+    const params = buildBatchNewOrderParams({
+      ...base,
+      price: '100',
+      quantity: '2',
+      builder: { id: 456, fee: 50 },
+    });
+
+    expect(Object.keys(params)).toEqual(['accountID', 'orders', 'builder']);
+    expect(Object.keys(params.builder!)).toEqual(['id', 'fee']);
+    expect(serializeBatchNewOrderParams(params)).toBe(
+      '{"accountID":42,"orders":[{"symbolID":7,"clOrdID":"tf-1-abc123","side":1,"type":1,"timeInForce":1,"price":"100","quantity":"2"}],"builder":{"id":456,"fee":50}}'
+    );
+  });
+
+  it('keeps zero builder fees when explicitly supplied', () => {
+    const params = buildBatchNewOrderParams({ ...base, builder: { id: 456, fee: 0 } });
+    expect(serializeBatchNewOrderParams(params)).toContain('"builder":{"id":456,"fee":0}');
+  });
+
+  it('validates builder IDs and Spot fee units and limit', () => {
+    expect(SODEX_SPOT_MAX_BUILDER_FEE_RATE).toBe(2000);
+    expect(() => buildBatchNewOrderParams({ ...base, builder: { id: -1, fee: 50 } })).toThrow(/account ID/);
+    expect(() => buildBatchNewOrderParams({ ...base, builder: { id: 2 ** 53, fee: 50 } })).toThrow(/account ID/);
+    expect(() => buildBatchNewOrderParams({ ...base, builder: { id: '18446744073709551616', fee: 50 } })).toThrow(/uint64/);
+    expect(() => buildBatchNewOrderParams({ ...base, builder: { id: '0456', fee: 50 } })).toThrow(/uint64/);
+    expect(() => buildBatchNewOrderParams({ ...base, builder: { id: 456, fee: 0.5 } })).toThrow(/tenths of a basis point/);
+    expect(() => buildBatchNewOrderParams({ ...base, builder: { id: 456, fee: 2001 } })).toThrow(/tenths of a basis point/);
+  });
+
+  it('preserves full uint64 builder account IDs as unquoted JSON integers', () => {
+    const params = buildBatchNewOrderParams({
+      ...base,
+      builder: { id: '18446744073709551615', fee: 50 },
+    });
+
+    expect(serializeBatchNewOrderParams(params)).toBe(
+      '{"accountID":42,"orders":[{"symbolID":7,"clOrdID":"tf-1-abc123","side":1,"type":1,"timeInForce":1}],"builder":{"id":18446744073709551615,"fee":50}}'
+    );
+  });
 });
 
 describe('computePayloadHash', () => {
@@ -202,6 +245,25 @@ describe('computePayloadHash', () => {
     expect(compact).toBe(
       '{"type":"batchNewOrder","params":{"accountID":1,"orders":[{"symbolID":2,"clOrdID":"x","side":1,"type":1,"timeInForce":1}]}}'
     );
+  });
+
+  it('includes the batch-level builder in the hashed Spot payload', () => {
+    const params = buildBatchNewOrderParams({
+      accountID: 42,
+      symbolID: 7,
+      clOrdID: 'tf-1-abc123',
+      side: OrderSide.BUY,
+      type: OrderType.LIMIT,
+      timeInForce: TimeInForce.GTC,
+      price: '100',
+      quantity: '2',
+      builder: { id: 456, fee: 50 },
+    });
+    const canonical = '{"type":"batchNewOrder","params":{"accountID":42,"orders":[{"symbolID":7,"clOrdID":"tf-1-abc123","side":1,"type":1,"timeInForce":1,"price":"100","quantity":"2"}],"builder":{"id":456,"fee":50}}}';
+
+    expect(computePayloadHash(params)).toBe('0x0c4866cd93bd50eaefd2b01beb654a1d814291642ad1af84235e94a9e45d3a5b');
+    expect(computePayloadHash(params)).toBe(keccak256(stringToHex(canonical)));
+    expect(computePayloadHash(params)).not.toBe(computePayloadHash({ ...params, builder: { id: 456, fee: 51 } }));
   });
 });
 

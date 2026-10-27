@@ -3,6 +3,9 @@ import { privateKeyToAccount } from 'viem/accounts';
 import {
   buildBuilderApprovalTypedData,
   fetchBuilderApprovals,
+  fetchBuilderStats,
+  getConfiguredBuilderAddress,
+  getConfiguredBuilderID,
   getSodexTestnetApiRoot,
   normalizeBuilderID,
   recoverBuilderApprovalSigner,
@@ -11,11 +14,17 @@ import {
 } from './sodexBuilder';
 
 const originalSpotUrl = process.env.SODEX_TESTNET_SPOT_URL;
+const originalBuilderID = process.env.SODEX_BUILDER_ID;
+const originalBuilderAddress = process.env.SODEX_BUILDER_ADDRESS;
 
 afterEach(() => {
   vi.unstubAllGlobals();
   if (originalSpotUrl === undefined) delete process.env.SODEX_TESTNET_SPOT_URL;
   else process.env.SODEX_TESTNET_SPOT_URL = originalSpotUrl;
+  if (originalBuilderID === undefined) delete process.env.SODEX_BUILDER_ID;
+  else process.env.SODEX_BUILDER_ID = originalBuilderID;
+  if (originalBuilderAddress === undefined) delete process.env.SODEX_BUILDER_ADDRESS;
+  else process.env.SODEX_BUILDER_ADDRESS = originalBuilderAddress;
 });
 
 describe('builder fee validation', () => {
@@ -36,6 +45,26 @@ describe('builder fee validation', () => {
     expect(() => normalizeBuilderID('18446744073709551616')).toThrow(/uint64/);
     expect(() => normalizeBuilderID('01')).toThrow(/uint64/);
     expect(() => normalizeBuilderID(2 ** 53)).toThrow(/uint64/);
+  });
+
+  it('loads the configured builder ID as a validated server-side account ID', () => {
+    process.env.SODEX_BUILDER_ID = '60497';
+    expect(getConfiguredBuilderID()).toBe('60497');
+
+    process.env.SODEX_BUILDER_ID = 'invalid';
+    expect(() => getConfiguredBuilderID()).toThrow(/uint64/);
+
+    delete process.env.SODEX_BUILDER_ID;
+    expect(getConfiguredBuilderID()).toBeNull();
+  });
+
+  it('validates the configured builder owner address', () => {
+    process.env.SODEX_BUILDER_ADDRESS = '0x0000000000000000000000000000000000000001';
+    expect(getConfiguredBuilderAddress()).toBe('0x0000000000000000000000000000000000000001');
+    process.env.SODEX_BUILDER_ADDRESS = 'invalid';
+    expect(() => getConfiguredBuilderAddress()).toThrow(/valid EVM wallet address/);
+    delete process.env.SODEX_BUILDER_ADDRESS;
+    expect(getConfiguredBuilderAddress()).toBeNull();
   });
 });
 
@@ -124,5 +153,110 @@ describe('builder API configuration and status parsing', () => {
       'https://testnet-gw.sodex.dev/api/v1/user/0x0000000000000000000000000000000000000001/builders',
       expect.objectContaining({ cache: 'no-store' })
     );
+  });
+
+  it('fetches official builder summary and daily chart responses without deriving fees', async () => {
+    process.env.SODEX_TESTNET_SPOT_URL = 'https://testnet-gw.sodex.dev/api/v1/spot';
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        code: 0,
+        data: {
+          name: 'TradeFirewall',
+          builderCode: '60497',
+          userCount: '2',
+          builderFee: '1.23',
+          tradeCount: '4',
+          tradeVolume: '123.45',
+        },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        code: 0,
+        data: [{
+          date: '2026-10-26',
+          userCount: '1',
+          builderFee: '0.23',
+          tradeCount: '1',
+          tradeVolume: '23.45',
+        }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(fetchBuilderStats(
+      '0x0000000000000000000000000000000000000001',
+      '60497'
+    )).resolves.toEqual({
+      summary: {
+        name: 'TradeFirewall',
+        builderCode: '60497',
+        userCount: '2',
+        builderFee: '1.23',
+        tradeCount: '4',
+        tradeVolume: '123.45',
+      },
+      dailyChart: [{
+        date: '2026-10-26',
+        userCount: '1',
+        builderFee: '0.23',
+        tradeCount: '1',
+        tradeVolume: '23.45',
+      }],
+    });
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      'https://testnet-gw.sodex.dev/api/v1/user/0x0000000000000000000000000000000000000001/builder/summary?accountID=60497',
+      expect.objectContaining({ cache: 'no-store' })
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      'https://testnet-gw.sodex.dev/api/v1/user/0x0000000000000000000000000000000000000001/builder/daily-chart?accountID=60497&limit=90',
+      expect.objectContaining({ cache: 'no-store' })
+    );
+  });
+
+  it('rejects Builder statistics that do not match the documented response schema', async () => {
+    process.env.SODEX_TESTNET_SPOT_URL = 'https://testnet-gw.sodex.dev/api/v1/spot';
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        code: 0,
+        data: { builderFee: '1.23' },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        code: 0,
+        data: [],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(fetchBuilderStats(
+      '0x0000000000000000000000000000000000000001',
+      '60497'
+    )).rejects.toThrow(/invalid Builder fee summary/);
+  });
+
+  it('reports an upstream HTTP error before attempting to parse a non-JSON body', async () => {
+    process.env.SODEX_TESTNET_SPOT_URL = 'https://testnet-gw.sodex.dev/api/v1/spot';
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(
+      new Response('404 page not found', { status: 404, headers: { 'Content-Type': 'text/plain' } })
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(fetchBuilderStats(
+      '0x0000000000000000000000000000000000000001',
+      '60497'
+    )).rejects.toThrow(
+      'SoDEX currently returns 404 for its Testnet Builder statistics endpoints. The documented statistics API is not available on Testnet yet.'
+    );
+  });
+
+  it('reports malformed JSON clearly when the upstream returns a successful status', async () => {
+    process.env.SODEX_TESTNET_SPOT_URL = 'https://testnet-gw.sodex.dev/api/v1/spot';
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(
+      new Response('nullnull', { status: 200, headers: { 'Content-Type': 'application/json' } })
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(fetchBuilderStats(
+      '0x0000000000000000000000000000000000000001',
+      '60497'
+    )).rejects.toThrow('SoDEX returned malformed JSON for Builder statistics.');
   });
 });

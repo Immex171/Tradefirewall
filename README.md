@@ -633,9 +633,9 @@ flowchart TD
 
 ### Builder Codes status
 
-Ordinary signed Spot trades can be submitted to SoDEX Testnet through the existing wallet flow; Builder Codes are optional and are not required to execute those trades. Mainnet execution remains disabled. Builder Codes themselves are not enabled in the application. The Spot order-signing helper supports the documented batch-level `builder: { id, fee }` fragment, including the Spot fee cap (2000 tenths of a basis point), canonical field ordering, and signing hash, but the existing order route and UI do not yet request or submit builder-enabled orders.
+Ordinary signed Spot trades can be submitted to SoDEX Testnet through the existing wallet flow; Builder Codes are optional and are not required to execute those trades. Mainnet execution remains disabled. Users can approve or revoke Builder Codes using their connected master wallet, inspect approval state, and explicitly opt in to an eligible Spot sell fee. Set the server-only `SODEX_BUILDER_ID` to TradeFirewall's dedicated SoDEX Testnet builder account ID. It is distinct from the connected user's account ID.
 
-The supplied Builder Codes specification does not define the approval write endpoint and request body, nonce acquisition, eligibility-account response schemas, or builder-statistics/trade-history endpoint paths. The project also has no authenticated user/session layer or SoDEX SDK. Consequently, approval, revocation, user consent, Perps signing, fee reconciliation, and builder earnings are intentionally unimplemented; no environment variable can activate them. Do not send a master-wallet private key to the server or assume that a configured builder is approved.
+Builder fee approval, optional Spot sell order inclusion, and both-engine status verification are implemented. Set `SODEX_BUILDER_ADDRESS` to the public owner address of the configured builder account to load SoDEX-reported Testnet summary and daily statistics. Recent Spot fills show SoDEX's actual builder fee separately from its total fee; the builder fee is included in the total and must not be double-counted. Perps order support is not implemented. Do not send a master-wallet private key to the server or assume an approval guarantees a fee on every fill.
 
 The specification's fee values are integers in tenths of a basis point: Spot is capped at 2000 (2%) and Perps at 200 (0.2%). Approval ceilings and actual fill fees are distinct; only confirmed fill records can establish actual builder fees. No live Builder Codes approval, order, or fill flow has been verified.
 
@@ -1041,14 +1041,13 @@ SOSOVALUE_API_KEY=
 SODEX_USE_TESTNET=true
 SODEX_TESTNET_SPOT_URL=https://testnet-gw.sodex.dev/api/v1/spot
 SODEX_TESTNET_PERPS_URL=https://testnet-gw.sodex.dev/api/v1/perps
-SODEX_BUILDER_ID=
 # SODEX_MAINNET_SPOT_URL=https://mainnet-gw.sodex.dev/api/v1/spot
 # SODEX_MAINNET_PERPS_URL=https://mainnet-gw.sodex.dev/api/v1/perps
 ```
 
-`SODEX_BUILDER_ID` is the TradeFirewall builder's numeric SoDEX **testnet account ID**, not a wallet address. Leave it empty to keep Builder Codes unavailable. Do not expose it through a `NEXT_PUBLIC_` variable. Builder approvals are per-user actions signed by that user's connected master wallet; no private key is requested or sent to the server. SoDEX checks builder eligibility (100 vUSDC in both Spot and Perps) when a non-zero approval is submitted. The app verifies the returned Spot and Perps approval lists before it reports success or includes a builder in an order.
+The connected wallet must have an activated SoDEX Testnet account. TradeFirewall's configured numeric builder account ID is displayed on Check Trade; it is separate from the user's account ID. Builder approvals are signed by the user's wallet; no private key is requested or sent to the server. SoDEX checks builder eligibility (100 vUSDC in both Spot and Perps) when a non-zero approval is submitted. The app verifies the returned Spot and Perps approval lists before it reports success or includes a builder in an order.
 
-Builder fees are disabled by default, are only eligible for SoDEX Spot sells in this execution flow, and require both an account-level user approval and explicit per-order opt-in. Fee rates are integer tenths of a basis point (`50` = `0.05%`); the Spot cap is `2000` (2%). Revocation signs `maxFeeRate: 0`. Builder orders remain subject to the existing trade risk gate and are testnet-only. See [SoDEX Builder Codes](./docs/SoDEX_Builder_Codes.md) for fee units, signing, and SoDEX API behavior.
+Builder fees default to 90 units (`0.09%`), are only eligible for SoDEX Spot sells in this execution flow, and require both an account-level user approval and explicit per-order opt-in. Fee rates are integer tenths of a basis point (`50` = `0.05%`); the Spot cap is `2000` (2%). Revocation signs `maxFeeRate: 0`. Builder orders remain subject to the existing trade risk gate and are testnet-only. See [SoDEX Builder Codes](./docs/SoDEX_Builder_Codes.md) for fee units, signing, and SoDEX API behavior.
 
 ---
 

@@ -23,9 +23,13 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const approvals = await fetchBuilderApprovals(address);
+    const [account, approvals] = await Promise.all([
+      sodexAPI.getAccountState(address),
+      fetchBuilderApprovals(address),
+    ]);
     return NextResponse.json({
       network: 'testnet',
+      accountID: account.accountID,
       builderID: getConfiguredBuilderID(),
       approvals,
       fetchedAt: Date.now(),
@@ -59,7 +63,7 @@ export async function POST(request: NextRequest) {
     const builderID = getConfiguredBuilderID();
     if (!builderID) {
       return NextResponse.json(
-        { error: 'Set SODEX_BUILDER_ID to the TradeFirewall builder account ID before enabling Builder Codes.' },
+        { error: 'Set SODEX_BUILDER_ID to the TradeFirewall SoDEX Testnet account ID before enabling Builder Codes.' },
         { status: 503 }
       );
     }

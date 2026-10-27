@@ -90,7 +90,7 @@ export function SoDEXOrderPlacement({
   const [builderStatus, setBuilderStatus] = useState<BuilderStatus | null>(null);
   const [builderStatusAddress, setBuilderStatusAddress] = useState<string | null>(null);
   const [builderStatusError, setBuilderStatusError] = useState<string | null>(null);
-  const [builderFeeRate, setBuilderFeeRate] = useState(50);
+  const [builderFeeRate, setBuilderFeeRate] = useState(90);
   const [builderOptInAddress, setBuilderOptInAddress] = useState<string | null>(null);
   const [builderActionBusy, setBuilderActionBusy] = useState(false);
 
@@ -335,7 +335,7 @@ export function SoDEXOrderPlacement({
             <div>
               <h3 className="text-sm font-medium text-text-primary">Optional Builder Code</h3>
               <p className="mt-1 text-xs text-text-secondary">
-                Builder fees are only eligible on SoDEX Spot sells. Your wallet must approve a maximum fee before an eligible order can include the builder.
+                TradeFirewall uses its configured SoDEX Builder ID. Builder fees are only eligible on SoDEX Spot sells, and your wallet must approve a maximum fee before an eligible order can include it.
               </p>
             </div>
             <Button
@@ -418,7 +418,7 @@ export function SoDEXOrderPlacement({
               </>
             ) : (
               <p className="text-xs text-text-secondary">
-                {visibleBuilderStatus ? 'Builder Code is not configured by this app.' : 'Checking builder approval status…'}
+                {visibleBuilderStatus ? 'No Builder ID is available for this SoDEX account.' : 'Checking builder approval status…'}
               </p>
             )}
           </section>

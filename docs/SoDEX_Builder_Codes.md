@@ -2,9 +2,9 @@
 
 ## TradeFirewall implementation status
 
-The app implements the SoDEX Testnet Spot builder approval/revocation flow, approval-status verification, and optional builder serialization for eligible sell orders. The dashboard displays the connected user's SoDEX Testnet account ID, which is also that user's Builder ID to share with other apps. Configure the server-only `SODEX_BUILDER_ID` environment variable with TradeFirewall's actual testnet account ID; the app does not guess or hardcode this identity. The wallet owner explicitly signs approval, revocation, and each eligible order. The order fee is disabled by default and is added only when the user has an active verified Spot approval and opts in for that sell.
+The app implements the SoDEX Testnet Spot builder approval/revocation flow, approval-status verification, and optional builder serialization for eligible sell orders. Configure the server-only `SODEX_BUILDER_ID` with TradeFirewall's dedicated SoDEX Testnet account ID. The Check Trade page displays this fee-receiving ID separately from the connected user's account ID. The wallet owner explicitly signs approval, revocation, and each eligible order. The order fee defaults to 90 units (0.09%) and is added only when the user has an active verified Spot approval and opts in for that sell.
 
-Builder approvals are checked in both Spot and Perps after write operations. SoDEX's documented approval endpoint enforces the builder account and balance eligibility requirement on non-zero approvals. A write with uncertain response or inconsistent engine status is reported as unconfirmed and is not automatically retried. Mainnet builder approvals and execution are not enabled. Builder earnings/statistics UI and fill-level reconciliation are not yet implemented; no earnings are inferred from an approval or order acceptance.
+Builder approvals are checked in both Spot and Perps after write operations. SoDEX's documented approval endpoint enforces the builder account and balance eligibility requirement on non-zero approvals. A write with uncertain response or inconsistent engine status is reported as unconfirmed and is not automatically retried. Mainnet builder approvals and execution are not enabled. The Check Trade page loads the documented Testnet builder summary and daily chart using the configured builder owner's public address; it displays SoDEX-reported values rather than estimating earnings from approval rates. Recent Spot fills show the documented `builderFee`/`bf` field separately from total `fee`, noting that the builder fee is already included in the total.
 
 ## Overview
 
@@ -307,7 +307,7 @@ Manage existing orders separately through the order-cancellation endpoints.
 
 ## 10. Builder Statistics
 
-Use the builder account owner's address to query combined Spot and Perps statistics.
+TradeFirewall's statistics endpoint uses the server-configured `SODEX_BUILDER_ADDRESS`, the public owner address of the dedicated account configured by `SODEX_BUILDER_ID`. These are separate from the connected trader's wallet and SoDEX account. The endpoint queries the SoDEX Testnet summary and daily chart and displays the documented response fields as reported, without estimating fees from approval rates.
 
 The optional `accountID` selects a builder account belonging to that owner. Omitting it uses the primary account.
 

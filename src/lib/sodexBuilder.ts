@@ -32,6 +32,65 @@ export interface BuilderApprovals {
   perps: BuilderApproval[];
 }
 
+export interface BuilderStats {
+  summary: BuilderFeeStats | null;
+  dailyChart: BuilderFeeDailyStats[];
+}
+
+export interface BuilderFeeStats {
+  address?: string;
+  name: string;
+  builderCode: string;
+  userCount: string;
+  builderFee: string;
+  tradeCount: string;
+  tradeVolume: string;
+}
+
+export interface BuilderFeeDailyStats {
+  date: string;
+  userCount: string;
+  builderFee: string;
+  tradeCount: string;
+  tradeVolume: string;
+}
+
+export class SodexBuilderStatsUnavailableError extends Error {
+  constructor() {
+    super('SoDEX currently returns 404 for its Testnet Builder statistics endpoints. The documented statistics API is not available on Testnet yet.');
+    this.name = 'SodexBuilderStatsUnavailableError';
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isBuilderFeeStats(value: unknown): value is BuilderFeeStats {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.name === 'string' &&
+    typeof value.builderCode === 'string' &&
+    typeof value.userCount === 'string' &&
+    typeof value.builderFee === 'string' &&
+    typeof value.tradeCount === 'string' &&
+    typeof value.tradeVolume === 'string' &&
+    (value.address === undefined || typeof value.address === 'string')
+  );
+}
+
+function isBuilderFeeDailyStats(value: unknown): value is BuilderFeeDailyStats {
+  return (
+    isRecord(value) &&
+    typeof value.date === 'string' &&
+    /^\d{4}-\d{2}-\d{2}$/.test(value.date) &&
+    typeof value.userCount === 'string' &&
+    typeof value.builderFee === 'string' &&
+    typeof value.tradeCount === 'string' &&
+    typeof value.tradeVolume === 'string'
+  );
+}
+
 export interface BuilderApprovalTypedData {
   domain: {
     name: 'universal';
@@ -66,6 +125,15 @@ export function getConfiguredBuilderID(): string | null {
   const configuredID = process.env.SODEX_BUILDER_ID?.trim();
   if (!configuredID) return null;
   return normalizeBuilderID(configuredID);
+}
+
+export function getConfiguredBuilderAddress(): string | null {
+  const address = process.env.SODEX_BUILDER_ADDRESS?.trim();
+  if (!address) return null;
+  if (!/^0x[a-fA-F0-9]{40}$/.test(address)) {
+    throw new Error('SODEX_BUILDER_ADDRESS must be a valid EVM wallet address.');
+  }
+  return address;
 }
 
 export function validateBuilderFeeRate(value: unknown): number {
@@ -201,4 +269,59 @@ export async function fetchBuilderApprovals(userAddress: string): Promise<Builde
   };
 
   return { spot: parseRows(data.spot), perps: parseRows(data.perps) };
+}
+
+export async function fetchBuilderStats(
+  userAddress: string,
+  builderID: string,
+  limit = 90
+): Promise<BuilderStats> {
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 300) {
+    throw new Error('Builder daily chart limit must be an integer from 1 to 300.');
+  }
+  const root = getSodexTestnetApiRoot();
+  const path = `/user/${encodeURIComponent(userAddress)}/builder`;
+  const query = `accountID=${encodeURIComponent(normalizeBuilderID(builderID))}`;
+  const request = async (endpoint: string): Promise<unknown> => {
+    const response = await fetch(`${root}${endpoint}`, {
+      headers: { Accept: 'application/json' },
+      cache: 'no-store',
+      signal: AbortSignal.timeout(8000),
+    });
+    if (response.status === 404) throw new SodexBuilderStatsUnavailableError();
+    if (!response.ok) throw new Error(`SoDEX Builder statistics unavailable (HTTP ${response.status}).`);
+    const body = await response.text();
+    let payload: unknown;
+    try {
+      payload = JSON.parse(body);
+    } catch {
+      throw new Error('SoDEX returned malformed JSON for Builder statistics.');
+    }
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      throw new Error('SoDEX returned an invalid Builder statistics response.');
+    }
+    const envelope = payload as { code?: number; error?: string; message?: string; data?: unknown };
+    if (envelope.code !== 0) {
+      throw new Error(envelope.error || envelope.message || 'SoDEX did not return Builder statistics.');
+    }
+    return envelope.data;
+  };
+  const [summaryData, dailyData] = await Promise.all([
+    request(`${path}/summary?${query}`),
+    request(`${path}/daily-chart?${query}&limit=${limit}`),
+  ]);
+  let summary: BuilderFeeStats | null = null;
+  if (summaryData !== null) {
+    if (!isBuilderFeeStats(summaryData)) {
+      throw new Error('SoDEX returned an invalid Builder fee summary.');
+    }
+    summary = summaryData;
+  }
+  if (!Array.isArray(dailyData) || !dailyData.every(isBuilderFeeDailyStats)) {
+    throw new Error('SoDEX returned an invalid Builder daily chart.');
+  }
+  return {
+    summary,
+    dailyChart: dailyData,
+  };
 }

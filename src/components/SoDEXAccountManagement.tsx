@@ -217,6 +217,16 @@ export function SoDEXAccountManagement({ onAnalyzeExit }: SoDEXAccountManagement
     return market?.symbol ?? order.symbol;
   };
 
+  const copyAccountID = async () => {
+    if (!snapshot) return;
+    try {
+      await navigator.clipboard.writeText(String(snapshot.accountID));
+      toast.success('SoDEX account ID copied.');
+    } catch {
+      toast.error('Unable to copy the account ID. Select and copy it manually.');
+    }
+  };
+
   return (
     <Card className="terminal-card border-primary/20">
       <CardHeader>
@@ -238,12 +248,24 @@ export function SoDEXAccountManagement({ onAnalyzeExit }: SoDEXAccountManagement
         ) : (
           <>
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <p className="text-xs text-text-secondary">
-                Account {snapshot?.accountID ?? '…'} · auto-refreshes every 15 seconds
-                {snapshot ? ` · updated ${new Date(snapshot.snapshotAt).toLocaleTimeString()}` : ''}
-              </p>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                <p className="text-sm text-text-secondary">
+                  SoDEX account ID <span className="font-mono font-semibold text-text-primary">{snapshot?.accountID ?? '…'}</span>
+                </p>
+                <Button
+                  onClick={() => void copyAccountID()}
+                  disabled={!snapshot}
+                  className="btn-secondary h-8 px-3 text-xs"
+                >
+                  Copy account ID
+                </Button>
+                <p className="text-xs text-text-secondary">
+                  Auto-refreshes every 15 seconds
+                  {snapshot ? ` · updated ${new Date(snapshot.snapshotAt).toLocaleTimeString()}` : ''}
+                </p>
+              </div>
               <Button onClick={() => void refreshAccount()} disabled={loading} className="btn-secondary text-sm">
-                {loading ? 'Refreshing…' : 'Refresh'}
+                {loading ? 'Refreshing…' : 'Refresh account'}
               </Button>
             </div>
 
@@ -360,7 +382,7 @@ export function SoDEXAccountManagement({ onAnalyzeExit }: SoDEXAccountManagement
                     <div className="overflow-x-auto">
                       <table className="w-full min-w-[640px] text-left text-xs">
                         <thead className="text-text-secondary">
-                          <tr><th className="p-2">Time</th><th className="p-2">Market</th><th className="p-2">Side</th><th className="p-2">Price</th><th className="p-2">Quantity</th><th className="p-2">Fee</th></tr>
+                          <tr><th className="p-2">Time</th><th className="p-2">Market</th><th className="p-2">Side</th><th className="p-2">Price</th><th className="p-2">Quantity</th><th className="p-2">Total fee</th><th className="p-2">Builder fee</th></tr>
                         </thead>
                         <tbody>
                           {snapshot.trades.slice(0, 10).map((trade, index) => (
@@ -371,10 +393,14 @@ export function SoDEXAccountManagement({ onAnalyzeExit }: SoDEXAccountManagement
                               <td className="p-2 font-mono">{String(firstDefined(trade, ['price', 'p']) ?? '—')}</td>
                               <td className="p-2 font-mono">{String(firstDefined(trade, ['quantity', 'qty', 'q']) ?? '—')}</td>
                               <td className="p-2 font-mono">{String(firstDefined(trade, ['fee', 'f']) ?? '—')}</td>
+                              <td className="p-2 font-mono">{String(firstDefined(trade, ['builderFee', 'bf']) ?? '—')}</td>
                             </tr>
                           ))}
                         </tbody>
                       </table>
+                      <p className="pt-2 text-xs text-text-secondary">
+                        SoDEX reports builder fees separately; they are included in the total fee and must not be added to it again.
+                      </p>
                     </div>
                   )}
                 </section>

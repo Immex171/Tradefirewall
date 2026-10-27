@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import ToastContainer from "@/components/Toast";
+import { WalletConnectionProvider } from "@/components/WalletConnectionProvider";
 
 export const metadata: Metadata = {
   title: "TradeFirewall - Stop Bad Crypto Trades Before They Happen",
@@ -15,8 +16,10 @@ export default function RootLayout({
   return (
     <html lang="en" className="h-full antialiased">
       <body className="min-h-full flex flex-col font-sans">
-        {children}
-        <ToastContainer />
+        <WalletConnectionProvider>
+          {children}
+          <ToastContainer />
+        </WalletConnectionProvider>
       </body>
     </html>
   );

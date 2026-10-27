@@ -46,6 +46,12 @@ export interface UserSettings {
   customRiskProfiles: UserCustomRiskProfile[];
 }
 
+export function escapeCsvCell(value: string | number): string {
+  const text = String(value);
+  const safeText = /^[\u0000-\u0020]*[=+\-@]/.test(text) ? `'${text}` : text;
+  return `"${safeText.replace(/"/g, '""')}"`;
+}
+
 class StorageManager {
   private readonly REPORTS_KEY = 'tradefirewall_reports';
   private readonly WATCHLIST_KEY = 'tradefirewall_watchlist';
@@ -360,8 +366,8 @@ class StorageManager {
       ]);
 
       const csvContent = [
-        headers.join(','),
-        ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+        headers.map(escapeCsvCell).join(','),
+        ...rows.map(row => row.map(escapeCsvCell).join(','))
       ].join('\n');
 
       return csvContent;

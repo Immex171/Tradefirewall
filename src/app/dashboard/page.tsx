@@ -3,10 +3,12 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { SiteNav } from '@/components/SiteNav';
+import { DashboardTabs } from '@/components/DashboardTabs';
+import { SoDEXBuilderIdCard } from '@/components/SoDEXBuilderIdCard';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { storageManager, WatchlistItem, SavedReport } from '@/lib/storage';
+import { storageManager, type SavedReport, type WatchlistItem } from '@/lib/storage';
 import { isHighRisk, riskBand, type RiskBand } from '@/lib/riskBand';
 import { toTradeCheckRows, type TradeCheckRow } from '@/lib/tradeCheckRow';
 import { toast } from '@/lib/toast';
@@ -22,6 +24,15 @@ interface DashboardMetrics {
   tradesChecked: number;
 }
 
+const EMPTY_METRICS: DashboardMetrics = {
+  averageRiskScore: null,
+  blockedTrades: 0,
+  reducedSizeRecommendations: 0,
+  highRiskAlerts: 0,
+  blockedNotionalUsd: 0,
+  tradesChecked: 0,
+};
+
 interface RiskAlert {
   id: string;
   message: string;
@@ -31,14 +42,7 @@ interface RiskAlert {
 
 function calculateMetricsFromReports(reports: SavedReport[]): DashboardMetrics {
   if (reports.length === 0) {
-    return {
-      averageRiskScore: null,
-      blockedTrades: 0,
-      reducedSizeRecommendations: 0,
-      highRiskAlerts: 0,
-      blockedNotionalUsd: 0,
-      tradesChecked: 0
-    };
+    return EMPTY_METRICS;
   }
 
   const totalRiskScore = reports.reduce((sum, report) => sum + report.riskScore, 0);
@@ -66,7 +70,7 @@ function calculateMetricsFromReports(reports: SavedReport[]): DashboardMetrics {
 }
 
 export default function DashboardPage() {
-  const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
+  const [metrics, setMetrics] = useState<DashboardMetrics>(EMPTY_METRICS);
   const [recentTradeChecks, setRecentTradeChecks] = useState<TradeCheckRow[]>([]);
   const [alerts, setAlerts] = useState<RiskAlert[]>([]);
   const [watchlist, setWatchlist] = useState<WatchlistItem[]>([]);
@@ -93,25 +97,9 @@ export default function DashboardPage() {
           }
         }
 
-        if (savedReports.length > 0) {
-          // Newest-first in storage (unshift); show latest checks at the top
-          setRecentTradeChecks(toTradeCheckRows(savedReports, 10));
-          
-          // Calculate real metrics from saved data
-          const calculatedMetrics = calculateMetricsFromReports(savedReports);
-          setMetrics(calculatedMetrics);
-        } else {
-          // No data available - show empty state
-          setRecentTradeChecks([]);
-          setMetrics({
-            averageRiskScore: null,
-            blockedTrades: 0,
-            reducedSizeRecommendations: 0,
-            highRiskAlerts: 0,
-            blockedNotionalUsd: 0,
-            tradesChecked: 0
-          });
-        }
+        // Reports are stored newest-first; the dashboard defaults to a short recent list.
+        setRecentTradeChecks(toTradeCheckRows(savedReports, 10));
+        setMetrics(calculateMetricsFromReports(savedReports));
 
         setWatchlist(savedWatchlist);
 
@@ -245,58 +233,6 @@ export default function DashboardPage() {
     );
   }
 
-  // Empty state - no trade history
-  if (!metrics || metrics.tradesChecked === 0) {
-    return (
-      <div className="min-h-screen bg-background">
-        <SiteNav
-          actions={
-            <Link href="/check-trade">
-              <Button className="btn-primary px-4 py-2 text-sm">Check New Trade</Button>
-            </Link>
-          }
-        />
-
-        <main className="max-w-4xl mx-auto px-4 py-24">
-          <div className="text-center">
-            <div className="w-24 h-24 bg-surface rounded-full flex items-center justify-center mx-auto mb-8">
-              <div className="w-12 h-12 bg-primary/20 rounded-full flex items-center justify-center">
-                <span className="text-primary text-xl">📊</span>
-              </div>
-            </div>
-            <h1 className="text-section-heading mb-4">No trade checks yet</h1>
-            <p className="text-body mb-8 max-w-md mx-auto">
-              Start by analyzing your first trade in the Trade Risk Engine to see your dashboard come to life.
-            </p>
-            
-            <div className="grid md:grid-cols-3 gap-4 mb-8 max-w-3xl mx-auto">
-              <div className="p-4 bg-surface rounded-lg border border-border">
-                <div className="text-2xl mb-2">🔍</div>
-                <div className="text-sm font-medium text-text-primary mb-1">Analyze Trades</div>
-                <div className="text-xs text-text-secondary">Check risk before executing</div>
-              </div>
-              <div className="p-4 bg-surface rounded-lg border border-border">
-                <div className="text-2xl mb-2">📈</div>
-                <div className="text-sm font-medium text-text-primary mb-1">Track History</div>
-                <div className="text-xs text-text-secondary">View your analysis history</div>
-              </div>
-              <div className="p-4 bg-surface rounded-lg border border-border">
-                <div className="text-2xl mb-2">⭐</div>
-                <div className="text-sm font-medium text-text-primary mb-1">Watch Assets</div>
-                <div className="text-xs text-text-secondary">Monitor your favorite tokens</div>
-              </div>
-            </div>
-            
-            <Link href="/check-trade">
-              <Button className="btn-primary px-8 py-3 text-base">
-                Check Your First Trade
-              </Button>
-            </Link>
-          </div>
-        </main>
-      </div>
-    );
-  }
   return (
     <div className="min-h-screen bg-background">
       {/* Navigation */}
@@ -309,159 +245,98 @@ export default function DashboardPage() {
         />
 
       <main className="max-w-7xl mx-auto px-4 py-8">
-        {/* SECTION 1: Dashboard Header */}
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6 mb-12">
+        <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4 mb-8">
           <div>
-            <h1 className="text-section-heading mb-2">Trading Dashboard</h1>
-            <p className="text-body max-w-2xl">
-              Review your trade checks, blocked trades, risk alerts, and watchlist in one place.
-            </p>
+            <h1 className="text-section-heading mb-1">Dashboard</h1>
+            <p className="text-body">A quick view of your trade checks and risk.</p>
           </div>
-          
-          <div className="flex flex-col sm:flex-row gap-4">
+          <div className="flex items-center gap-2">
             <Link href="/check-trade">
-              <Button className="btn-primary px-6 py-2">Check New Trade</Button>
+              <Button className="btn-primary px-5 py-2">Check a trade</Button>
             </Link>
-            <Button
-              className="btn-secondary px-6 py-2"
-              onClick={handleExportJSON}
-            >
-              Export JSON
-            </Button>
-            <Button
-              className="btn-secondary px-6 py-2"
-              onClick={handleExportCSV}
-            >
-              Export CSV
-            </Button>
-            <Button 
-              className="btn-secondary px-6 py-2"
-              onClick={() => {
-                const symbol = prompt('Enter asset symbol (e.g., BTC, ETH, SOL):');
-                if (symbol && symbol.trim()) {
-                  const upperSymbol = symbol.trim().toUpperCase();
-                  
-                  // Validate symbol format
-                  if (!/^[A-Z]{2,10}$/.test(upperSymbol)) {
-                    toast.error('Invalid symbol format. Use uppercase letters only (e.g., BTC, ETH, SOL).');
-                    return;
-                  }
-                  
-                  const result = storageManager.addToWatchlist({
-                    symbol: upperSymbol,
-                    source: 'manual'
-                  });
-                  
-                  if (result.success) {
-                    toast.success(result.message);
-                    setWatchlist(storageManager.getWatchlist());
-                  } else {
-                    toast.info(result.message);
-                  }
-                }
-              }}
-            >
-              Add Watchlist Asset
-            </Button>
+            {metrics.tradesChecked > 0 && (
+              <details className="relative">
+                <summary className="btn-secondary px-4 py-2 cursor-pointer list-none">Export</summary>
+                <div className="absolute right-0 z-10 mt-2 flex min-w-36 flex-col gap-1 rounded-lg border border-border bg-background p-2 shadow-lg">
+                  <Button className="btn-secondary justify-start px-3 py-2 text-sm" onClick={handleExportCSV}>Download CSV</Button>
+                  <Button className="btn-secondary justify-start px-3 py-2 text-sm" onClick={handleExportJSON}>Download JSON</Button>
+                </div>
+              </details>
+            )}
           </div>
         </div>
+        <DashboardTabs active="/dashboard" />
+        <SoDEXBuilderIdCard />
 
-        {/* SECTION 2: Key Metrics Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-12">
-          <Card className="terminal-card">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-label">Average Risk Score</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-text-primary">
-                {metrics.averageRiskScore ? `${metrics.averageRiskScore}/100` : 'N/A'}
+        {metrics.tradesChecked === 0 && (
+          <Card className="terminal-card mb-8 border-primary/30">
+            <CardContent className="flex flex-col gap-4 p-6 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="text-card-heading">Your dashboard is ready</h2>
+                <p className="text-body mt-1">
+                  Run your first trade check to see your risk history and metrics here.
+                </p>
               </div>
+              <Link href="/check-trade">
+                <Button className="btn-primary">Check your first trade</Button>
+              </Link>
             </CardContent>
           </Card>
+        )}
 
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 mb-8">
           <Card className="terminal-card">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-label">Blocked Trades</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-danger">{metrics.blockedTrades}</div>
+            <CardContent className="flex items-center justify-between p-4">
+              <span className="text-label">Trade checks</span>
+              <span className="text-2xl font-bold text-text-primary">{metrics.tradesChecked}</span>
             </CardContent>
           </Card>
-
           <Card className="terminal-card">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-label">Reduced Size Rec.</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-warning">{metrics.reducedSizeRecommendations}</div>
+            <CardContent className="flex items-center justify-between p-4">
+              <span className="text-label">Average risk</span>
+              <span className="text-2xl font-bold text-text-primary">
+                {metrics.averageRiskScore !== null ? `${metrics.averageRiskScore}/100` : '—'}
+              </span>
             </CardContent>
           </Card>
-
           <Card className="terminal-card">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-label">High-Risk Alerts</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-orange-risk">{metrics.highRiskAlerts}</div>
-            </CardContent>
-          </Card>
-
-          <Card className="terminal-card">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-label">Blocked notional</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-success">
-                {metrics.blockedNotionalUsd > 0 ? `$${metrics.blockedNotionalUsd.toLocaleString()}` : '—'}
-              </div>
-              <p className="text-xs text-text-secondary mt-2">
-                Sum of saved trade sizes where the engine returned BLOCK (not a simulated PnL).
-              </p>
-            </CardContent>
-          </Card>
-
-          <Card className="terminal-card">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-label">Trades Checked</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-text-primary">{metrics.tradesChecked}</div>
+            <CardContent className="flex items-center justify-between p-4">
+              <span className="text-label">Blocked</span>
+              <span className="text-2xl font-bold text-danger">{metrics.blockedTrades}</span>
             </CardContent>
           </Card>
         </div>
 
-        {/* SECTION 3: Trade Analysis Summary - Only show if we have real data */}
         {recentTradeChecks.length > 0 && (
-          <div className="grid lg:grid-cols-2 gap-8 mb-12">
+        <details className="mb-8 rounded-xl border border-border bg-surface/30">
+          <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-text-primary">
+            More risk insights
+            <span className="ml-2 text-xs font-normal text-text-secondary">Distribution and analysis details</span>
+          </summary>
+          {recentTradeChecks.length > 0 && (
+            <div className="grid gap-5 border-t border-border p-4 lg:grid-cols-2">
             <Card className="terminal-card">
               <CardHeader>
-                <CardTitle className="text-card-heading">Trade Analysis Summary</CardTitle>
+                <CardTitle className="text-card-heading">Additional metrics</CardTitle>
               </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <div className="text-label">Total Analyses</div>
-                    <div className="text-lg font-medium text-text-primary">{metrics.tradesChecked}</div>
-                  </div>
-                  <div>
-                    <div className="text-label">Avg Risk Score</div>
-                    <div className="text-lg font-medium text-text-primary">
-                      {metrics.averageRiskScore ? `${metrics.averageRiskScore}/100` : 'N/A'}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-label">Blocked Trades</div>
-                    <div className="text-lg font-medium text-danger">{metrics.blockedTrades}</div>
-                  </div>
-                  <div>
-                    <div className="text-label">Blocked notional (saved)</div>
-                    <div className="text-lg font-medium text-success">
-                      {metrics.blockedNotionalUsd > 0
-                        ? `$${metrics.blockedNotionalUsd.toLocaleString()}`
-                        : '—'}
-                    </div>
-                  </div>
+              <CardContent className="space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-sm text-text-secondary">Reduced-size recommendations</span>
+                  <span className="font-medium text-warning">{metrics.reducedSizeRecommendations}</span>
                 </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-sm text-text-secondary">High-risk checks</span>
+                  <span className="font-medium text-orange-risk">{metrics.highRiskAlerts}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-sm text-text-secondary">Blocked trade amount</span>
+                  <span className="font-medium text-text-primary">
+                    {metrics.blockedNotionalUsd > 0 ? `$${metrics.blockedNotionalUsd.toLocaleString()}` : '—'}
+                  </span>
+                </div>
+                <p className="text-xs text-text-secondary">
+                  Sum of blocked trade sizes, not a simulated P&amp;L.
+                </p>
               </CardContent>
             </Card>
 
@@ -471,7 +346,7 @@ export default function DashboardPage() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="text-sm text-text-secondary mb-4">
-                  Based on your {metrics.tradesChecked} trade analyses
+                  Distribution across your {recentTradeChecks.length} most recent trade checks
                 </div>
                 <div className="space-y-3">
                   {(() => {
@@ -530,120 +405,43 @@ export default function DashboardPage() {
                 </div>
               </CardContent>
             </Card>
-          </div>
+            </div>
+          )}
+        </details>
         )}
-        {/* SECTION 4: Watchlist - Only show if user has added assets */}
-        {watchlist.length > 0 && (
-          <Card className="terminal-card mb-12">
-            <CardHeader>
-              <CardTitle className="text-card-heading">Watchlist</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-3">
-                {watchlist.map((item, index) => (
-                  <div key={index} className="flex items-center justify-between p-3 bg-surface rounded-lg">
-                    <div className="flex items-center space-x-3">
-                      <div className="w-8 h-8 bg-primary/20 rounded-full flex items-center justify-center">
-                        <span className="text-xs font-medium text-primary">{item.symbol}</span>
-                      </div>
-                      <div>
-                        <span className="text-text-primary font-medium">{item.symbol}</span>
-                        {item.latestRiskScore && (
-                          <div className="text-xs text-text-secondary">Risk: {item.latestRiskScore}/100</div>
-                        )}
-                      </div>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <div className="text-xs text-text-secondary">
-                        Added {new Date(item.addedAt).toLocaleDateString()}
-                      </div>
-                      <Button 
-                        onClick={() => {
-                          const result = storageManager.removeFromWatchlist(item.symbol);
-                          if (result.success) {
-                            toast.success(result.message);
-                            setWatchlist(storageManager.getWatchlist());
-                          } else {
-                            toast.error(result.message);
-                          }
-                        }}
-                        className="text-xs px-2 py-1 bg-danger/10 text-danger hover:bg-danger/20 border border-danger/30"
-                      >
-                        Remove
-                      </Button>
-                    </div>
-                  </div>
-                ))}
-              <Button 
-                className="w-full btn-secondary text-sm"
-                onClick={() => {
-                  const symbol = prompt('Enter asset symbol (e.g., BTC, ETH, SOL):');
-                  if (symbol && symbol.trim()) {
-                    const upperSymbol = symbol.trim().toUpperCase();
-                    
-                    // Validate symbol format
-                    if (!/^[A-Z]{2,10}$/.test(upperSymbol)) {
-                      toast.error('Invalid symbol format. Use uppercase letters only (e.g., BTC, ETH, SOL).');
-                      return;
-                    }
-                    
-                    const result = storageManager.addToWatchlist({
-                      symbol: upperSymbol,
-                      source: 'manual'
-                    });
-                    
-                    if (result.success) {
-                      toast.success(result.message);
-                      setWatchlist(storageManager.getWatchlist());
-                    } else {
-                      toast.info(result.message);
-                    }
-                  }
-                }}
-              >
-                Add Asset
-              </Button>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* SECTION 5: Recent Trade Checks - Only show if user has trade history */}
         {recentTradeChecks.length > 0 && (
-          <Card id="reports" className="terminal-card mb-12 scroll-mt-24">
-            <CardHeader>
-              <CardTitle className="text-card-heading">Recent Trade Checks</CardTitle>
+          <Card id="reports" className="terminal-card mb-8 scroll-mt-24">
+            <CardHeader className="flex flex-row items-center justify-between gap-3">
+              <CardTitle className="text-card-heading">Recent trade checks</CardTitle>
+              <Link href="/dashboard/history" className="text-sm text-primary hover:underline">View all</Link>
             </CardHeader>
             <CardContent>
-              <div className="terminal-table">
-                <table className="w-full">
+              <div className="terminal-table overflow-x-auto" tabIndex={0} aria-label="Recent trade checks, horizontally scrollable">
+                <table className="w-full min-w-[560px]">
+                  <caption className="sr-only">Your most recent saved trade checks</caption>
                   <thead>
                     <tr>
-                      <th className="text-left">Time</th>
-                      <th className="text-left">Asset</th>
-                      <th className="text-left">Action</th>
-                      <th className="text-left">Amount</th>
-                      <th className="text-left">Holding Period</th>
-                      <th className="text-left">Risk Score</th>
-                      <th className="text-left">Decision</th>
-                      <th className="text-left">Status</th>
+                      <th scope="col" className="text-left">Time</th>
+                      <th scope="col" className="text-left">Asset</th>
+                      <th scope="col" className="text-left">Action</th>
+                      <th scope="col" className="text-left">Amount</th>
+                      <th scope="col" className="text-left">Risk Score</th>
+                      <th scope="col" className="text-left">Decision</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {recentTradeChecks.map((check, index) => (
-                      <tr key={index}>
+                    {recentTradeChecks.slice(0, 5).map((check) => (
+                      <tr key={check.id}>
                         <td className="text-text-secondary">{check.time}</td>
                         <td className="text-text-primary font-medium">{check.asset}</td>
                         <td className="text-text-secondary capitalize">{check.action}</td>
                         <td className="text-text-secondary">{check.amount}</td>
-                        <td className="text-text-secondary">{check.holdingPeriod}</td>
                         <td className="text-text-primary">{check.riskScore}/100</td>
                         <td>
                           <Badge className={`${getDecisionBadge(check.decision)} px-2 py-1 text-xs rounded`}>
                             {check.decision}
                           </Badge>
                         </td>
-                        <td className="text-text-secondary">{check.status}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -653,61 +451,60 @@ export default function DashboardPage() {
           </Card>
         )}
 
-        {/* SECTION 6: High-Risk Alerts - Only show if there are real alerts */}
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Link href="/dashboard/history" className="group">
+            <Card className="terminal-card h-full transition-colors group-hover:ring-primary/40">
+              <CardContent className="flex items-center justify-between p-5">
+                <div>
+                  <h2 className="font-medium text-text-primary">Trade history</h2>
+                  <p className="mt-1 text-sm text-text-secondary">Review all {metrics.tradesChecked} saved checks</p>
+                </div>
+                <span aria-hidden="true" className="text-primary">→</span>
+              </CardContent>
+            </Card>
+          </Link>
+          <Link href="/dashboard/watchlist" className="group">
+            <Card className="terminal-card h-full transition-colors group-hover:ring-primary/40">
+              <CardContent className="flex items-center justify-between p-5">
+                <div>
+                  <h2 className="font-medium text-text-primary">Watchlist</h2>
+                  <p className="mt-1 text-sm text-text-secondary">
+                    {watchlist.length} {watchlist.length === 1 ? 'asset' : 'assets'} saved
+                  </p>
+                </div>
+                <span aria-hidden="true" className="text-primary">→</span>
+              </CardContent>
+            </Card>
+          </Link>
+        </div>
+
+        {/* Alerts remain available without taking over the dashboard. */}
         {alerts.length > 0 && (
-          <Card className="terminal-card mb-12">
-            <CardHeader>
-              <CardTitle className="text-card-heading">Risk Alerts</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
+          <details className="mb-8 rounded-xl border border-border bg-surface/30">
+            <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-text-primary">
+              Risk alerts <span className="ml-1 text-text-secondary">({alerts.length})</span>
+            </summary>
+            <div className="space-y-3 border-t border-border p-4">
               {alerts.map((alert) => (
-                <div key={alert.id} className={`p-3 rounded-lg border ${
+                <div key={alert.id} className={`rounded-lg border p-3 ${
                   alert.severity === 'high' ? 'border-danger/30 bg-danger/5' : 'border-warning/30 bg-warning/5'
                 }`}>
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1">
-                      <div className={`text-sm font-medium ${
-                        alert.severity === 'high' ? 'text-danger' : 'text-warning'
-                      }`}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className={`text-sm font-medium ${alert.severity === 'high' ? 'text-danger' : 'text-warning'}`}>
                         {alert.message}
                       </div>
-                      <div className="text-xs text-text-secondary mt-1">{alert.time}</div>
+                      <div className="mt-1 text-xs text-text-secondary">{alert.time}</div>
                     </div>
-                    <Badge className={`${
-                      alert.severity === 'high' ? 'bg-danger text-white' : 'bg-warning text-background'
-                    } text-xs`}>
+                    <Badge className={`${alert.severity === 'high' ? 'bg-danger text-white' : 'bg-warning text-background'} text-xs`}>
                       {alert.severity}
                     </Badge>
                   </div>
                 </div>
               ))}
-            </CardContent>
-          </Card>
-        )}
-
-        {/* SECTION 10: Recommended Next Actions */}
-        <Card className="terminal-card mb-12">
-          <CardHeader>
-            <CardTitle className="text-card-heading">Recommended Next Actions</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-              <Link href="/check-trade">
-                <Button className="w-full btn-primary">
-                  Check a new trade
-                </Button>
-              </Link>
-              <Button className="w-full btn-secondary" onClick={handleExportCSV}>
-                Export risk report
-              </Button>
-              <Link href="/check-trade">
-                <Button className="w-full btn-secondary">
-                  Run a validation backtest
-                </Button>
-              </Link>
             </div>
-          </CardContent>
-        </Card>
+          </details>
+        )}
 
       </main>
     </div>

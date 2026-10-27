@@ -21,6 +21,7 @@ import { toast } from '@/lib/toast';
 import { toTradeCheckRows, type TradeCheckRow } from '@/lib/tradeCheckRow';
 import { mapAnalyzeError } from '@/lib/analyzeErrors';
 import { buildDataDisclosure } from '@/lib/dataDisclosure';
+import { getSodexSpotSymbolError } from '@/lib/sodexSymbols';
 import {
   DECISION_HEADLINE,
   DECISION_PANEL_CLASS,
@@ -156,8 +157,14 @@ export default function CheckTradePage() {
 
   const handleBeginnerSubmit = () => {
     const sym = beginnerSymbol.trim().toUpperCase();
-    const amt = parseFloat(beginnerAmount);    if (!sym || !/^[A-Z]{2,10}$/.test(sym)) {
+    const amt = parseFloat(beginnerAmount);
+    if (!sym || !/^[A-Z]{2,10}$/.test(sym)) {
       toast.error('Enter a valid symbol (e.g. BTC, ETH, SOL).');
+      return;
+    }
+    const symbolError = getSodexSpotSymbolError(sym);
+    if (symbolError) {
+      toast.error(symbolError);
       return;
     }
     if (!amt || amt <= 0) {
@@ -550,13 +557,19 @@ export default function CheckTradePage() {
                         onFocus={() => setBeginnerDropdownOpen(true)}
                         className="w-full px-4 py-3 bg-surface border border-border rounded-lg text-text-primary text-lg font-mono focus:outline-none focus:border-primary"
                       />
+                      {getSodexSpotSymbolError(beginnerSymbol) && (
+                        <p role="alert" className="mt-1 text-xs text-danger">
+                          {getSodexSpotSymbolError(beginnerSymbol)}
+                        </p>
+                      )}
                       {beginnerDropdownOpen && currencies.length > 0 && (
                         <ul className="absolute z-50 mt-1 w-full max-h-52 overflow-auto rounded-lg border border-border bg-card shadow-lg">
                           {currencies
                             .filter((c) =>
-                              beginnerQuery.length === 0 ||
-                              c.symbol.toLowerCase().includes(beginnerQuery.toLowerCase()) ||
-                              c.name.toLowerCase().includes(beginnerQuery.toLowerCase())
+                              !getSodexSpotSymbolError(c.symbol) &&
+                              (beginnerQuery.length === 0 ||
+                                c.symbol.toLowerCase().includes(beginnerQuery.toLowerCase()) ||
+                                c.name.toLowerCase().includes(beginnerQuery.toLowerCase()))
                             )
                             .slice(0, 50)
                             .map((c) => (

@@ -227,14 +227,28 @@ export function saferPositionAmount(amount: number, riskScore: number): number |
  * calculation uses rather than against the resulting scores — a factor that legitimately measured
  * 50 is not an estimate, and a factor left at its 50 default is.
  */
-export function buildEstimatedSodexFactors(sodexData: SodexAnalysisData): string[] {
+export function buildEstimatedSodexFactors(
+  sodexData: Pick<SodexAnalysisData, 'klines' | 'orderbook' | 'executionPreview'>
+): string[] {
   const estimated: string[] = [];
   // The factor calculation calls the volatility helper with as few as one close, and that helper
   // returns a neutral 50 when it has fewer than 3 closes (fewer than 2 returns). One or two
   // klines therefore reach the score as a stand-in, not a measurement.
   if (!sodexData.klines || sodexData.klines.length < 3) estimated.push('volatility');
-  if (!sodexData.orderbook) estimated.push('liquidity');
-  if (!sodexData.executionPreview) estimated.push('execution');
+  if (
+    !sodexData.orderbook ||
+    !sodexData.orderbook.bids?.length ||
+    !sodexData.orderbook.asks?.length
+  ) {
+    estimated.push('liquidity');
+  }
+  if (
+    !sodexData.executionPreview ||
+    !Array.isArray(sodexData.executionPreview.warnings) ||
+    sodexData.executionPreview.warnings.some((warning) => warning.includes('no visible'))
+  ) {
+    estimated.push('execution');
+  }
   return estimated;
 }
 

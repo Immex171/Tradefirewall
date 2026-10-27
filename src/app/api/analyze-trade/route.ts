@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { riskEngine, TradeInput } from '@/lib/riskEngine';
 import { riskExplanationGenerator } from '@/lib/riskExplanation';
+import { getSodexSpotSymbolError } from '@/lib/sodexSymbols';
 import { APIConnectionError, SoSoValueHttpError, SoSoValueTimeoutError } from '@/lib/sosovalue';
 import {
   isBuiltInProfile,
@@ -28,6 +29,13 @@ export async function POST(request: NextRequest) {
     if (!/^[A-Z]{2,10}$/.test(tradeInput.symbol.toUpperCase())) {
       return NextResponse.json(
         { error: 'Invalid symbol format. Use uppercase letters only (e.g., BTC, ETH, SOL)' },
+        { status: 400 }
+      );
+    }
+    const symbolError = getSodexSpotSymbolError(tradeInput.symbol);
+    if (symbolError) {
+      return NextResponse.json(
+        { error: symbolError, errorType: 'INVALID_SPOT_SYMBOL' },
         { status: 400 }
       );
     }

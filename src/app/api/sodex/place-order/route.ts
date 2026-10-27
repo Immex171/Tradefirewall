@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sodexAPI } from '@/lib/sodex';
+import { getSodexSpotSymbolError } from '@/lib/sodexSymbols';
 import {
   OrderSide,
   OrderType,
@@ -11,6 +12,7 @@ import {
   generateNonce,
   toSodexApiSign,
   snapToStep,
+  serializeBatchNewOrderParams,
   SODEX_TESTNET_CHAIN_ID,
   BatchNewOrderParams,
 } from '@/lib/sodexOrderSigning';
@@ -55,6 +57,10 @@ async function handlePrepare(body: {
 
   if (!symbol || !side || !amountUsd || amountUsd <= 0 || !walletAddress) {
     return NextResponse.json({ error: 'Invalid order parameters' }, { status: 400 });
+  }
+  const symbolError = getSodexSpotSymbolError(symbol);
+  if (symbolError) {
+    return NextResponse.json({ error: symbolError, errorType: 'INVALID_SPOT_SYMBOL' }, { status: 400 });
   }
 
   // Server-side backstop — mirrors the UI gating in ConfirmationGate/check-trade,
@@ -185,7 +191,7 @@ async function handleSubmit(body: {
       'X-API-Nonce': String(nonce),
       'X-API-Chain': String(SODEX_TESTNET_CHAIN_ID),
     },
-    body: JSON.stringify(orderParams),
+    body: serializeBatchNewOrderParams(orderParams),
   });
 
   const raw: unknown = await response.json().catch(() => null);

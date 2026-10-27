@@ -546,6 +546,10 @@ SoDEX market data does not require a normal API key.
 
 SoDEX API keys are used for signing authenticated actions. In SoDEX, API keys are EVM addresses that can sign on behalf of a master account or sub-account. They are not needed for public market-data reads.
 
+Both trade-input pickers load active Spot markets from `GET /api/sodex/symbols`, filtered to symbols covered by both SoDEX and SoSoValue. The list follows the configured SoDEX network and includes `TRADING` markets quoted in `vUSDC`; symbols are resolved to SoDEX's exact market names before market-data requests or execution. Markets missing from either provider are excluded so a selectable symbol can proceed through analysis.
+
+On `/check-trade`, the SoDEX Testnet Account panel connects the user's wallet to read open Spot orders, recent order history, fills, and available balances. It refreshes automatically every 15 seconds. Cancelling an open order requires a fresh wallet signature and is revalidated against the connected account's live open orders immediately before submission. An available balance can start a full-exit sell analysis; the ordinary risk decision and signed order flow still apply, and the sell quantity is checked against the live unlocked balance before preparation. These account-management controls are Testnet-only.
+
 ---
 
 ## SoDEX Data Flow
@@ -805,6 +809,9 @@ flowchart LR
     A --> E[GET /api/watchlist]
     A --> F[POST /api/watchlist]
     A --> G[POST /api/execution-preview]
+    A --> M[GET /api/sodex/symbols]
+    A --> N[GET /api/sodex/account]
+    A --> O[POST /api/sodex/cancel-order]
 
     B --> H[SoSoValue API]
     B --> I[SoDEX API]
@@ -817,6 +824,22 @@ flowchart LR
     F --> L
     G --> I
 ```
+
+---
+
+### GET `/api/sodex/symbols`
+
+Returns active USDC-quoted SoDEX Spot markets on the configured network that also have SoSoValue currency coverage, for the trade-input pickers.
+
+---
+
+### GET `/api/sodex/account`
+
+Returns the connected wallet's Testnet Spot balances, open orders, recent order history, fills, and active SoDEX markets. This is a public read operation; writes require the wallet to sign.
+
+### POST `/api/sodex/cancel-order`
+
+Uses `action: "prepare"` to construct the documented `batchCancelOrder` EIP-712 payload, then `action: "submit"` to relay the wallet-signed Testnet cancellation. The server verifies the order is still open and belongs to the wallet before relay.
 
 ---
 

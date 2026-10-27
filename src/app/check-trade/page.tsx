@@ -13,6 +13,7 @@ import { RiskFactorsList } from '@/components/RiskFactorsList';
 import { RiskExplanationBox } from '@/components/RiskExplanationBox';
 import { ConfirmationGate } from '@/components/ConfirmationGate';
 import { SoDEXOrderPlacement } from '@/components/SoDEXOrderPlacement';
+import { SoDEXAccountManagement } from '@/components/SoDEXAccountManagement';
 import { TradeInput, RiskAnalysis, saferPositionAmount } from '@/lib/riskEngine';
 import { RiskExplanation } from '@/lib/riskExplanation';
 import { storageManager, WatchlistItem, SavedReport } from '@/lib/storage';
@@ -21,6 +22,7 @@ import { toast } from '@/lib/toast';
 import { toTradeCheckRows, type TradeCheckRow } from '@/lib/tradeCheckRow';
 import { mapAnalyzeError } from '@/lib/analyzeErrors';
 import { buildDataDisclosure } from '@/lib/dataDisclosure';
+import type { SodexSpotMarketOption } from '@/lib/sodexMarkets';
 import { getSodexSpotSymbolError } from '@/lib/sodexSymbols';
 import {
   DECISION_HEADLINE,
@@ -93,12 +95,14 @@ export default function CheckTradePage() {
   const [beginnerQuery, setBeginnerQuery] = useState('');
   const [beginnerDropdownOpen, setBeginnerDropdownOpen] = useState(false);
   const [beginnerAmount, setBeginnerAmount] = useState('');
-  const [currencies, setCurrencies] = useState<{ symbol: string; name: string }[]>([]);
+  const [currencies, setCurrencies] = useState<SodexSpotMarketOption[]>([]);
+  const [marketLoadError, setMarketLoadError] = useState<string | null>(null);
   const beginnerComboRef = useRef<HTMLDivElement>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
   const [showConfirmation, setShowConfirmation] = useState(false);
   const [currentTrade, setCurrentTrade] = useState<TradeInput | null>(null);
+  const [exitIntent, setExitIntent] = useState<{ symbol: string; quantity: number } | null>(null);
   const [watchlist, setWatchlist] = useState<WatchlistItem[]>([]);
   const [recentReports, setRecentReports] = useState<TradeCheckRow[]>([]);
   /** Aborts the in-flight request. Also drives the Cancel button. */
@@ -125,12 +129,20 @@ export default function CheckTradePage() {
     refreshRecentReports();
   }, []);
 
-  // Fetch supported currencies for symbol combobox
+  // Fetch the configured network's actual tradable SoDEX Spot markets.
   useEffect(() => {
-    fetch('/api/sosovalue/currencies')
-      .then((r) => r.json())
-      .then((d) => { if (Array.isArray(d.currencies)) setCurrencies(d.currencies); })
-      .catch(() => {});
+    fetch('/api/sodex/symbols')
+      .then(async (response) => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Unable to load SoDEX Spot markets');
+        if (!Array.isArray(data.markets)) throw new Error('SoDEX market list response was invalid');
+        setCurrencies(data.markets);
+        setMarketLoadError(null);
+      })
+      .catch((error: unknown) => {
+        setCurrencies([]);
+        setMarketLoadError(error instanceof Error ? error.message : 'Unable to load SoDEX Spot markets');
+      });
   }, []);
 
   // Close beginner combobox on outside click
@@ -171,7 +183,20 @@ export default function CheckTradePage() {
       toast.error('Enter a valid trade amount in USD.');
       return;
     }
+    setExitIntent(null);
     handleTradeSubmit({ symbol: sym, action: 'buy', amount: amt, holdingPeriod: '1day', riskProfile: 'balanced' });
+  };
+
+  const handleAnalyzeExit = (exit: { symbol: string; quantity: number; amountUsd: number }) => {
+    setExitIntent({ symbol: exit.symbol, quantity: exit.quantity });
+    setAnalysisResult(null);
+    handleTradeSubmit({
+      symbol: exit.symbol,
+      action: 'sell',
+      amount: exit.amountUsd,
+      holdingPeriod: '1day',
+      riskProfile: 'balanced',
+    });
   };
 
   const handleTradeSubmit = async (tradeInput: TradeInput) => {
@@ -270,6 +295,7 @@ export default function CheckTradePage() {
 
   const handleReduceSize = () => {
     if (!analysisResult) return;
+    setExitIntent(null);
 
     // Reduce to the amount the report recommends rather than a hardcoded halving, so the number
     // the user is moved to is the one shown next to the recommendation. The gate only appears above
@@ -347,6 +373,7 @@ export default function CheckTradePage() {
 
   const handleNewAnalysis = () => {
     setAnalysisResult(null);
+    setExitIntent(null);
     setShowConfirmation(false);
     setCurrentTrade(null);
     toast.info('New analysis started.');
@@ -562,16 +589,22 @@ export default function CheckTradePage() {
                           {getSodexSpotSymbolError(beginnerSymbol)}
                         </p>
                       )}
+                      {marketLoadError && (
+                        <p role="alert" className="mt-1 text-xs text-danger">{marketLoadError}</p>
+                      )}
+                      {!marketLoadError && currencies.length > 0 && (
+                        <p className="mt-1 text-xs text-text-secondary">
+                          {currencies.length} SoDEX Spot markets supported by both providers
+                        </p>
+                      )}
                       {beginnerDropdownOpen && currencies.length > 0 && (
                         <ul className="absolute z-50 mt-1 w-full max-h-52 overflow-auto rounded-lg border border-border bg-card shadow-lg">
                           {currencies
                             .filter((c) =>
-                              !getSodexSpotSymbolError(c.symbol) &&
-                              (beginnerQuery.length === 0 ||
-                                c.symbol.toLowerCase().includes(beginnerQuery.toLowerCase()) ||
-                                c.name.toLowerCase().includes(beginnerQuery.toLowerCase()))
+                              beginnerQuery.length === 0 ||
+                              c.symbol.toLowerCase().includes(beginnerQuery.toLowerCase()) ||
+                              c.name.toLowerCase().includes(beginnerQuery.toLowerCase())
                             )
-                            .slice(0, 50)
                             .map((c) => (
                               <li
                                 key={c.symbol}
@@ -623,9 +656,19 @@ export default function CheckTradePage() {
           {/* Advanced input form */}
           {!beginnerMode && (
           <div className="col-span-12 lg:col-span-7">
-            <TradeInputForm onSubmit={handleTradeSubmit} isLoading={isLoading} />
+            <TradeInputForm
+              onSubmit={(tradeInput) => {
+                setExitIntent(null);
+                handleTradeSubmit(tradeInput);
+              }}
+              isLoading={isLoading}
+            />
           </div>
           )}
+
+          <div className="col-span-12">
+            <SoDEXAccountManagement onAnalyzeExit={handleAnalyzeExit} />
+          </div>
 
           {/* Live Trade Preview - Right Column */}
           <div className="col-span-12 lg:col-span-5 space-y-6">
@@ -926,6 +969,12 @@ export default function CheckTradePage() {
                 tradeInput={analysisResult.tradeInput}
                 riskScore={analysisResult.riskAnalysis.riskScore}
                 decision={analysisResult.riskAnalysis.decision}
+                exitQuantity={
+                  exitIntent?.symbol === analysisResult.tradeInput.symbol &&
+                  analysisResult.tradeInput.action === 'sell'
+                    ? exitIntent.quantity
+                    : undefined
+                }
               />
             </div>
           )}

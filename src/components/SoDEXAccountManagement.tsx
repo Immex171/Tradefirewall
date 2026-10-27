@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { toast } from '@/lib/toast';
 import { ensureSodexTestnetChain } from '@/lib/sodexWallet';
+import { useWalletConnection } from '@/components/WalletConnectionProvider';
 
 interface AccountBalance {
   id: number;
@@ -54,7 +55,7 @@ interface SoDEXAccountManagementProps {
 }
 
 export function SoDEXAccountManagement({ onAnalyzeExit }: SoDEXAccountManagementProps) {
-  const [walletAddress, setWalletAddress] = useState<string | null>(null);
+  const { walletAddress, connectWallet: requestWalletConnection } = useWalletConnection();
   const [snapshot, setSnapshot] = useState<AccountSnapshot | null>(null);
   const [loading, setLoading] = useState(false);
   const [busyOrder, setBusyOrder] = useState<number | null>(null);
@@ -94,11 +95,8 @@ export function SoDEXAccountManagement({ onAnalyzeExit }: SoDEXAccountManagement
     }
     setError(null);
     try {
-      const accounts = (await window.ethereum.request({ method: 'eth_requestAccounts' })) as string[];
-      const address = accounts?.[0];
-      if (!address) throw new Error('No wallet account returned.');
+      await requestWalletConnection();
       await ensureSodexTestnetChain();
-      setWalletAddress(address);
     } catch (connectError) {
       setError(connectError instanceof Error ? connectError.message : 'Wallet connection failed.');
     }

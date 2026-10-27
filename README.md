@@ -1041,11 +1041,14 @@ SOSOVALUE_API_KEY=
 SODEX_USE_TESTNET=true
 SODEX_TESTNET_SPOT_URL=https://testnet-gw.sodex.dev/api/v1/spot
 SODEX_TESTNET_PERPS_URL=https://testnet-gw.sodex.dev/api/v1/perps
+SODEX_BUILDER_ID=
 # SODEX_MAINNET_SPOT_URL=https://mainnet-gw.sodex.dev/api/v1/spot
 # SODEX_MAINNET_PERPS_URL=https://mainnet-gw.sodex.dev/api/v1/perps
 ```
 
-TradeFirewall does not request or transmit a master-wallet private key. The existing execution path signs Spot orders in the browser wallet and is restricted to SoDEX testnet. Builder approval and revocation are not implemented.
+`SODEX_BUILDER_ID` is the TradeFirewall builder's numeric SoDEX **testnet account ID**, not a wallet address. Leave it empty to keep Builder Codes unavailable. Do not expose it through a `NEXT_PUBLIC_` variable. Builder approvals are per-user actions signed by that user's connected master wallet; no private key is requested or sent to the server. SoDEX checks builder eligibility (100 vUSDC in both Spot and Perps) when a non-zero approval is submitted. The app verifies the returned Spot and Perps approval lists before it reports success or includes a builder in an order.
+
+Builder fees are disabled by default, are only eligible for SoDEX Spot sells in this execution flow, and require both an account-level user approval and explicit per-order opt-in. Fee rates are integer tenths of a basis point (`50` = `0.05%`); the Spot cap is `2000` (2%). Revocation signs `maxFeeRate: 0`. Builder orders remain subject to the existing trade risk gate and are testnet-only. See [SoDEX Builder Codes](./docs/SoDEX_Builder_Codes.md) for fee units, signing, and SoDEX API behavior.
 
 ---
 

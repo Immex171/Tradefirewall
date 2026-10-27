@@ -52,6 +52,7 @@ async function handlePrepare(body: {
   walletAddress?: string;
   maxSlippagePct?: number;
   decision?: string;
+  exitQuantity?: number;
 }) {
   const { symbol, side, amountUsd, walletAddress, decision } = body;
 
@@ -108,12 +109,38 @@ async function handlePrepare(body: {
 
   const slippage = Math.min(Math.max(body.maxSlippagePct ?? 0.01, 0.001), 0.05);
   const isBuy = side === 'buy';
+  if (body.exitQuantity !== undefined && (isBuy || !Number.isFinite(body.exitQuantity) || body.exitQuantity <= 0)) {
+    return NextResponse.json(
+      { error: 'An exit quantity must be a positive number on a sell order.', errorType: 'INVALID_EXIT_QUANTITY' },
+      { status: 400 }
+    );
+  }
   // Marketable limit + IOC: fills immediately like a market order, but never worse
   // than this protection price — the slippage-protection mechanism.
   const protectionPriceRaw = isBuy ? ask * (1 + slippage) : bid * (1 - slippage);
   const protectionPrice = snapToStep(protectionPriceRaw, rules.tickSize, rules.pricePrecision);
   const refPrice = parseFloat(protectionPrice);
-  const quantity = snapToStep(amountUsd / refPrice, rules.stepSize, rules.quantityPrecision);
+  let quantity: string;
+  if (body.exitQuantity !== undefined) {
+    const balances = await sodexAPI.getSpotAccountBalances(walletAddress);
+    const balance = balances.find(
+      (item) => item.coin.toUpperCase() === rules.baseCoin.toUpperCase()
+    );
+    const total = balance ? parseFloat(balance.total) : 0;
+    const locked = balance ? parseFloat(balance.locked) : 0;
+    const available = Number.isFinite(total) && Number.isFinite(locked)
+      ? Math.max(0, total - locked)
+      : 0;
+    if (body.exitQuantity > available + rules.stepSize * 1e-8) {
+      return NextResponse.json(
+        { error: 'Available balance changed. Refresh your account and analyze the exit again.', errorType: 'EXIT_BALANCE_CHANGED' },
+        { status: 409 }
+      );
+    }
+    quantity = snapToStep(Math.min(body.exitQuantity, available), rules.stepSize, rules.quantityPrecision);
+  } else {
+    quantity = snapToStep(amountUsd / refPrice, rules.stepSize, rules.quantityPrecision);
+  }
   const notional = parseFloat(quantity) * refPrice;
 
   if (!(parseFloat(quantity) > 0)) {

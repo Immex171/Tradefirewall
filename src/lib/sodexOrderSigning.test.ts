@@ -10,7 +10,10 @@ import {
   formatDecimalString,
   snapToStep,
   buildBatchNewOrderParams,
+  buildBatchCancelOrderParams,
   serializeBatchNewOrderParams,
+  serializeBatchCancelOrderParams,
+  computeActionPayloadHash,
   computePayloadHash,
   buildExchangeActionTypedData,
   toSodexApiSign,
@@ -182,6 +185,43 @@ describe('buildBatchNewOrderParams', () => {
     expect(serializeBatchNewOrderParams(params)).toBe(
       '{"accountID":42,"orders":[{"symbolID":7,"clOrdID":"tf-1-abc123","side":1,"type":1,"timeInForce":1}],"builder":{"id":18446744073709551615,"fee":50}}'
     );
+  });
+});
+
+describe('batch order cancellation signing', () => {
+  const params = buildBatchCancelOrderParams({
+    accountID: 42,
+    symbolID: 7,
+    clOrdID: 'tf-1-abc123',
+    orderID: 987,
+  });
+
+  it('uses the documented batchCancelOrder field names and order', () => {
+    expect(Object.keys(params)).toEqual(['accountID', 'cancels']);
+    expect(Object.keys(params.cancels[0])).toEqual(['symbolID', 'clOrdID', 'orderID']);
+    expect(serializeBatchCancelOrderParams(params)).toBe(
+      '{"accountID":42,"cancels":[{"symbolID":7,"clOrdID":"tf-1-abc123","orderID":987}]}'
+    );
+  });
+
+  it('hashes the official action name and compact params object', () => {
+    const expected = keccak256(stringToHex(JSON.stringify({ type: 'batchCancelOrder', params })));
+    expect(computeActionPayloadHash('batchCancelOrder', params)).toBe(expected);
+  });
+
+  it('rejects invalid IDs and missing client order IDs', () => {
+    expect(() => buildBatchCancelOrderParams({
+      accountID: 0, symbolID: 7, clOrdID: 'cl-1', orderID: 1,
+    })).toThrow(/account ID/);
+    expect(() => buildBatchCancelOrderParams({
+      accountID: 42, symbolID: 0, clOrdID: 'cl-1', orderID: 1,
+    })).toThrow(/symbol ID/);
+    expect(() => buildBatchCancelOrderParams({
+      accountID: 42, symbolID: 7, clOrdID: '', orderID: 1,
+    })).toThrow(/client order ID/);
+    expect(() => buildBatchCancelOrderParams({
+      accountID: 42, symbolID: 7, clOrdID: 'bad id', orderID: 1,
+    })).toThrow(/client order ID/);
   });
 });
 

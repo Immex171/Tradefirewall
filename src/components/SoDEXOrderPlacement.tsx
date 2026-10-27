@@ -6,56 +6,13 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { TradeInput, Decision } from '@/lib/riskEngine';
 import { toast } from '@/lib/toast';
-
-declare global {
-  interface Window {
-    ethereum?: {
-      request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
-    };
-  }
-}
-
-// MetaMask (and most EIP-1193 wallets) validate that eth_signTypedData_v4's
-// domain.chainId matches the wallet's currently active network before signing —
-// so the wallet must actually be switched to SoDEX's chain, not just informed of
-// it via the typed data. Verified live: testnet.valuechain.xyz returns chainId
-// 0x21d45 (138565), matching SODEX_TESTNET_CHAIN_ID.
-const VALUECHAIN_TESTNET_PARAMS = {
-  chainId: '0x21d45',
-  chainName: 'ValueChain Testnet',
-  nativeCurrency: { name: 'SOSO', symbol: 'SOSO', decimals: 18 },
-  rpcUrls: ['https://testnet.valuechain.xyz'],
-  blockExplorerUrls: ['https://test-scan.valuechain.xyz'],
-};
-
-async function ensureSodexTestnetChain(): Promise<void> {
-  if (!window.ethereum) throw new Error('No injected wallet found');
-  const currentChainId = (await window.ethereum.request({ method: 'eth_chainId' })) as string;
-  if (currentChainId.toLowerCase() === VALUECHAIN_TESTNET_PARAMS.chainId) return;
-
-  try {
-    await window.ethereum.request({
-      method: 'wallet_switchEthereumChain',
-      params: [{ chainId: VALUECHAIN_TESTNET_PARAMS.chainId }],
-    });
-  } catch (switchError) {
-    const code = (switchError as { code?: number })?.code;
-    if (code === 4902) {
-      // Chain not yet known to the wallet — add it, which also switches to it.
-      await window.ethereum.request({
-        method: 'wallet_addEthereumChain',
-        params: [VALUECHAIN_TESTNET_PARAMS],
-      });
-    } else {
-      throw switchError;
-    }
-  }
-}
+import { ensureSodexTestnetChain } from '@/lib/sodexWallet';
 
 interface SoDEXOrderPlacementProps {
   tradeInput: TradeInput;
   riskScore: number;
   decision: Decision;
+  exitQuantity?: number;
 }
 
 interface ExecutionPreviewData {
@@ -96,7 +53,12 @@ interface OrderResult {
 
 type Stage = 'idle' | 'connecting' | 'connected' | 'preparing' | 'ready' | 'signing' | 'submitting' | 'done' | 'error';
 
-export function SoDEXOrderPlacement({ tradeInput, riskScore, decision }: SoDEXOrderPlacementProps) {
+export function SoDEXOrderPlacement({
+  tradeInput,
+  riskScore,
+  decision,
+  exitQuantity,
+}: SoDEXOrderPlacementProps) {
   const [stage, setStage] = useState<Stage>('idle');
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
   const [executionPreview, setExecutionPreview] = useState<ExecutionPreviewData | null>(null);
@@ -156,6 +118,7 @@ export function SoDEXOrderPlacement({ tradeInput, riskScore, decision }: SoDEXOr
           walletAddress,
           maxSlippagePct: maxSlippagePct / 100,
           decision,
+          exitQuantity,
         }),
       });
       const json = await res.json();
@@ -303,6 +266,9 @@ export function SoDEXOrderPlacement({ tradeInput, riskScore, decision }: SoDEXOr
               <Row label="Side" value={prepared.preview.side} />
               <Row label="Order Type / TIF" value={`${prepared.preview.orderType} / ${prepared.preview.timeInForce}`} />
               <Row label="Quantity" value={prepared.preview.quantity} />
+              {exitQuantity !== undefined && (
+                <Row label="Exit" value="Sell from available SoDEX balance" />
+              )}
               <Row label="Protection Price" value={`$${prepared.preview.protectionPrice}`} />
               <Row label="Max Slippage" value={`${(prepared.preview.slippagePct * 100).toFixed(1)}%`} />
               <Row label="Estimated Notional" value={`$${prepared.preview.estimatedNotionalUsd.toLocaleString()}`} />

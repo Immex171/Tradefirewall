@@ -1,6 +1,7 @@
 // SoDEX public REST — https://testnet-gw.sodex.dev/api/v1/spot (default)
 // Responses use `code` + `data`; tickers/orderbooks use exchange-native field names.
 import { getSodexSpotSymbolError } from './sodexSymbols';
+import { findSodexMarketSymbol } from './sodexMarkets';
 
 export interface SodexSymbol {
   symbol: string;
@@ -14,10 +15,14 @@ export interface SodexSymbol {
   permissions: string[];
   /** Present on SoDEX market rows */
   name?: string;
+  displayName?: string;
+  baseCoin?: string;
+  quoteCoin?: string;
   makerFee?: string;
   takerFee?: string;
   /** Numeric symbolID required for signed order placement (GET /markets/symbols) */
   id?: number;
+  baseCoinID?: number;
   tickSize?: string;
   stepSize?: string;
   pricePrecision?: number;
@@ -30,6 +35,30 @@ export interface SodexAccountState {
   accountID: number;
   userID: number;
   balances: Array<{ coinID: number; coin: string; total: string; locked: string }>;
+}
+
+export interface SodexSpotAccountBalance {
+  id: number;
+  coin: string;
+  total: string;
+  locked: string;
+}
+
+export interface SodexSpotAccountOrder {
+  symbol: string;
+  orderID: number;
+  clOrdID: string;
+  side: string;
+  type: string;
+  timeInForce: string;
+  price?: string;
+  origQty?: string;
+  funds?: string;
+  status: string;
+  executedQty: string;
+  executedValue: string;
+  createdAt: number;
+  updatedAt: number;
 }
 
 export interface SodexCoin {
@@ -231,7 +260,11 @@ export interface SodexMarketMicrostructure {
 class SoDEXAPI {
   private readonly spotBaseUrl: string;
   private readonly network: 'testnet' | 'mainnet';
-  private symbolsCache: { at: number; rows: Record<string, unknown>[] } | null = null;
+  private symbolsCache: {
+    at: number;
+    rows: Record<string, unknown>[];
+    baseUrl: string;
+  } | null = null;
   private static readonly SYMBOLS_TTL_MS = 5 * 60 * 1000;
 
   get configuredNetwork(): 'testnet' | 'mainnet' {
@@ -293,38 +326,13 @@ class SoDEXAPI {
     }
   }
 
-  private mapSymbolToSodexFormat(symbol: string): string {
-    const symbolMap: Record<string, string> = {
-      BTC: 'vBTC_vUSDC',
-      ETH: 'vETH_vUSDC',
-      SOL: 'vSOL_vUSDC',
-      ADA: 'vADA_vUSDC',
-      AVAX: 'vAVAX_vUSDC',
-      DOGE: 'vDOGE_vUSDC',
-      XRP: 'vXRP_vUSDC',
-      BNB: 'vBNB_vUSDC',
-      LINK: 'vLINK_vUSDC',
-      UNI: 'vUNI_vUSDC',
-      AAVE: 'vAAVE_vUSDC',
-      LTC: 'vLTC_vUSDC',
-      SHIB: 'vSHIB_vUSDC',
-      ZEC: 'vZEC_vUSDC',
-      USDT: 'vUSDT_vUSDC',
-      SOSO: 'WSOSO_vUSDC',
-      HYPE: 'vHYPE_vUSDC',
-      AAPL: 'vAAPL_vUSDC',
-      TSLA: 'vTSLA_vUSDC',
-      NVDA: 'vNVDA_vUSDC',
-      MSFT: 'vMSFT_vUSDC',
-      GOOGL: 'vGOOGL_vUSDC',
-      AMZN: 'vAMZN_vUSDC',
-      META: 'vMETA_vUSDC',
-      TESTBTC: 'TESTBTC_vUSDC',
-      TESTSOSO: 'TESTSOSO_vUSDC',
-      TESTSHIB: 'TESTSHIB_vUSDC',
-    };
-    const u = symbol.toUpperCase();
-    return symbolMap[u] || symbol;
+  private async mapSymbolToSodexFormat(symbol: string, baseUrlOverride?: string): Promise<string> {
+    const rows = await this.getSymbolsRowsCached(baseUrlOverride);
+    const marketSymbol = findSodexMarketSymbol(rows, symbol);
+    if (!marketSymbol) {
+      throw new Error(`No active SoDEX Spot vUSDC market found for ${symbol}`);
+    }
+    return marketSymbol;
   }
 
   private normalizeTickerRow(raw: Record<string, unknown>, sodexSymbol: string): SodexTicker {
@@ -411,19 +419,23 @@ class SoDEXAPI {
     };
   }
 
-  async getSpotSymbols(): Promise<SodexSymbol[]> {
-    const rows = (await this.fetchSpot('/markets/symbols')) as Record<string, unknown>[];
+  async getSpotSymbols(baseUrlOverride?: string): Promise<SodexSymbol[]> {
+    const rows = (await this.fetchSpot('/markets/symbols', baseUrlOverride)) as Record<string, unknown>[];
     if (!Array.isArray(rows)) throw new Error('SoDEX /markets/symbols: unexpected shape');
-    this.symbolsCache = { at: Date.now(), rows };
+    this.symbolsCache = { at: Date.now(), rows, baseUrl: baseUrlOverride ?? this.spotBaseUrl };
     return rows as unknown as SodexSymbol[];
   }
 
-  private async getSymbolsRowsCached(): Promise<Record<string, unknown>[]> {
-    if (this.symbolsCache && Date.now() - this.symbolsCache.at < SoDEXAPI.SYMBOLS_TTL_MS) {
+  private async getSymbolsRowsCached(baseUrlOverride?: string): Promise<Record<string, unknown>[]> {
+    const baseUrl = baseUrlOverride ?? this.spotBaseUrl;
+    if (
+      this.symbolsCache &&
+      this.symbolsCache.baseUrl === baseUrl &&
+      Date.now() - this.symbolsCache.at < SoDEXAPI.SYMBOLS_TTL_MS
+    ) {
       return this.symbolsCache.rows;
     }
-    await this.getSpotSymbols();
-    return this.symbolsCache!.rows;
+    return (await this.getSpotSymbols(baseUrlOverride)) as unknown as Record<string, unknown>[];
   }
 
   async getSpotTickers(): Promise<SodexTicker[]> {
@@ -433,7 +445,7 @@ class SoDEXAPI {
   }
 
   async getSpotTicker(symbol: string): Promise<SodexTicker> {
-    const sodexSymbol = this.mapSymbolToSodexFormat(symbol);
+    const sodexSymbol = await this.mapSymbolToSodexFormat(symbol);
     const tickers = await this.getSpotTickers();
     const hit = tickers.find((t) => t.symbol === sodexSymbol);
     if (hit) return hit;
@@ -459,7 +471,7 @@ class SoDEXAPI {
   }
 
   async getSpotBookTicker(symbol: string): Promise<SodexBookTicker> {
-    const sodexSymbol = this.mapSymbolToSodexFormat(symbol);
+    const sodexSymbol = await this.mapSymbolToSodexFormat(symbol);
     const all = await this.getSpotBookTickers();
     const hit = all.find((b) => b.symbol === sodexSymbol);
     if (hit) return hit;
@@ -477,7 +489,7 @@ class SoDEXAPI {
   }
 
   async getSpotOrderbook(symbol: string, limit = 100): Promise<SodexOrderbook> {
-    const sodexSymbol = this.mapSymbolToSodexFormat(symbol);
+    const sodexSymbol = await this.mapSymbolToSodexFormat(symbol);
     const raw = (await this.fetchSpot(
       `/markets/${encodeURIComponent(sodexSymbol)}/orderbook?limit=${limit}`
     )) as Record<string, unknown>;
@@ -485,7 +497,7 @@ class SoDEXAPI {
   }
 
   async getSpotKlines(symbol: string, interval: string, limit = 100): Promise<SodexKline[]> {
-    const sodexSymbol = this.mapSymbolToSodexFormat(symbol);
+    const sodexSymbol = await this.mapSymbolToSodexFormat(symbol);
     const rows = (await this.fetchSpot(
       `/markets/${encodeURIComponent(sodexSymbol)}/klines?interval=${encodeURIComponent(
         interval
@@ -506,7 +518,7 @@ class SoDEXAPI {
     startTime?: number,
     endTime?: number
   ): Promise<SodexKline[]> {
-    const sodexSymbol = this.mapSymbolToSodexFormat(symbol);
+    const sodexSymbol = await this.mapSymbolToSodexFormat(symbol, SoDEXAPI.MAINNET_SPOT_URL);
     let path = `/markets/${encodeURIComponent(sodexSymbol)}/klines?interval=${encodeURIComponent(
       interval
     )}&limit=${limit}`;
@@ -519,7 +531,7 @@ class SoDEXAPI {
 
   /** Numeric symbolID required for signed order placement (distinct from the string market name). */
   async getSpotSymbolID(symbol: string): Promise<number> {
-    const sodexSymbol = this.mapSymbolToSodexFormat(symbol);
+    const sodexSymbol = await this.mapSymbolToSodexFormat(symbol);
     const rows = await this.getSymbolsRowsCached();
     const row = rows.find((s) => String(s.name ?? '') === sodexSymbol);
     const id = row ? Number(row.id) : NaN;
@@ -535,10 +547,11 @@ class SoDEXAPI {
     pricePrecision: number;
     quantityPrecision: number;
     minNotional: number;
+    baseCoin: string;
   }> {
     const inputError = getSodexSpotSymbolError(symbol);
     if (inputError) throw new Error(inputError);
-    const sodexSymbol = this.mapSymbolToSodexFormat(symbol);
+    const sodexSymbol = await this.mapSymbolToSodexFormat(symbol);
     const rows = await this.getSymbolsRowsCached();
     const row = rows.find((s) => String(s.name ?? '') === sodexSymbol);
     if (!row) throw new Error(`SoDEX symbol rules not found for ${symbol} (${sodexSymbol})`);
@@ -551,6 +564,7 @@ class SoDEXAPI {
       pricePrecision: Number(row.pricePrecision ?? 2),
       quantityPrecision: Number(row.quantityPrecision ?? 2),
       minNotional: parseFloat(String(row.minNotional ?? '0')),
+      baseCoin: String(row.baseCoin ?? ''),
     };
   }
 
@@ -587,8 +601,50 @@ class SoDEXAPI {
     };
   }
 
+  async getSpotAccountBalances(address: string): Promise<SodexSpotAccountBalance[]> {
+    const raw = await this.fetchSpot(`/accounts/${encodeURIComponent(address)}/balances`);
+    const balances = raw && typeof raw === 'object' && 'balances' in raw
+      ? (raw as { balances?: unknown }).balances
+      : undefined;
+    if (!Array.isArray(balances)) {
+      throw new Error('SoDEX account balances returned an unexpected shape');
+    }
+    return balances as SodexSpotAccountBalance[];
+  }
+
+  async getSpotAccountOrders(address: string): Promise<SodexSpotAccountOrder[]> {
+    const raw = await this.fetchSpot(`/accounts/${encodeURIComponent(address)}/orders`);
+    const orders = raw && typeof raw === 'object' && 'orders' in raw
+      ? (raw as { orders?: unknown }).orders
+      : undefined;
+    if (!Array.isArray(orders)) {
+      throw new Error('SoDEX account open orders returned an unexpected shape');
+    }
+    return orders as SodexSpotAccountOrder[];
+  }
+
+  async getSpotAccountOrderHistory(address: string, limit = 20): Promise<SodexSpotAccountOrder[]> {
+    const raw = await this.fetchSpot(
+      `/accounts/${encodeURIComponent(address)}/orders/history?limit=${Math.min(Math.max(limit, 1), 100)}`
+    );
+    if (!Array.isArray(raw)) {
+      throw new Error('SoDEX account order history returned an unexpected shape');
+    }
+    return raw as SodexSpotAccountOrder[];
+  }
+
+  async getSpotAccountTrades(address: string, limit = 20): Promise<Record<string, unknown>[]> {
+    const raw = await this.fetchSpot(
+      `/accounts/${encodeURIComponent(address)}/trades?limit=${Math.min(Math.max(limit, 1), 100)}`
+    );
+    if (!Array.isArray(raw)) {
+      throw new Error('SoDEX account trade history returned an unexpected shape');
+    }
+    return raw as Record<string, unknown>[];
+  }
+
   async getSpotTrades(symbol: string, limit = 100): Promise<SodexTrade[]> {
-    const sodexSymbol = this.mapSymbolToSodexFormat(symbol);
+    const sodexSymbol = await this.mapSymbolToSodexFormat(symbol);
     const rows = (await this.fetchSpot(
       `/markets/${encodeURIComponent(sodexSymbol)}/trades?limit=${limit}`
     )) as Record<string, unknown>[];
@@ -597,9 +653,8 @@ class SoDEXAPI {
   }
 
   async validateSymbolExists(symbol: string): Promise<boolean> {
-    const sodexSymbol = this.mapSymbolToSodexFormat(symbol);
     const rows = await this.getSymbolsRowsCached();
-    return rows.some((s) => String(s.name ?? s.symbol ?? '') === sodexSymbol);
+    return findSodexMarketSymbol(rows, symbol) !== null;
   }
 
   /**
@@ -702,7 +757,7 @@ class SoDEXAPI {
   }
 
   private async getMarketFees(symbol: string): Promise<number> {
-    const sodexSymbol = this.mapSymbolToSodexFormat(symbol);
+    const sodexSymbol = await this.mapSymbolToSodexFormat(symbol);
     const rows = await this.getSymbolsRowsCached();
     const row = rows.find((s) => String(s.name ?? '') === sodexSymbol);
     if (row) {
@@ -839,7 +894,7 @@ class SoDEXAPI {
     tradeInput: { symbol: string; action: string; amount: number }
   ): Promise<SodexMarketMicrostructure> {
     const t0 = Date.now();
-    const sodexSymbol = this.mapSymbolToSodexFormat(symbol);
+    const sodexSymbol = await this.mapSymbolToSodexFormat(symbol);
     const basePath = `/markets/${encodeURIComponent(sodexSymbol)}`;
     const endpoints = [
       `${this.spotBaseUrl}/markets/tickers`,

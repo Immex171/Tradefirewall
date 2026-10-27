@@ -42,6 +42,18 @@ export interface BatchNewOrderParams {
   builder?: BuilderOrderParams;
 }
 
+export interface BatchCancelOrderItemParams {
+  symbolID: number;
+  clOrdID: string;
+  orderID?: number;
+  origClOrdID?: string;
+}
+
+export interface BatchCancelOrderParams {
+  accountID: number;
+  cancels: BatchCancelOrderItemParams[];
+}
+
 /** Strips trailing zeros — SoDEX rejects "0.4060", requires "0.406". */
 export function formatDecimalString(value: number, precision: number): string {
   const fixed = value.toFixed(Math.max(0, precision));
@@ -134,6 +146,44 @@ export function serializeBatchNewOrderParams(params: BatchNewOrderParams): strin
 
   const serializedOrders = JSON.stringify({ accountID: params.accountID, orders: params.orders });
   return `${serializedOrders.slice(0, -1)},"builder":{"id":${builderID},"fee":${params.builder.fee}}}`;
+}
+
+export function buildBatchCancelOrderParams(input: {
+  accountID: number;
+  symbolID: number;
+  clOrdID: string;
+  orderID: number;
+}): BatchCancelOrderParams {
+  if (!Number.isSafeInteger(input.accountID) || input.accountID <= 0) {
+    throw new Error('SoDEX account ID must be a positive safe integer');
+  }
+  if (!Number.isSafeInteger(input.symbolID) || input.symbolID <= 0) {
+    throw new Error('SoDEX symbol ID must be a positive safe integer');
+  }
+  if (!Number.isSafeInteger(input.orderID) || input.orderID <= 0) {
+    throw new Error('SoDEX order ID must be a positive safe integer');
+  }
+  if (!/^[0-9a-zA-Z_-]{1,36}$/.test(input.clOrdID)) {
+    throw new Error('SoDEX client order ID must contain 1-36 letters, digits, underscores, or hyphens');
+  }
+  return {
+    accountID: input.accountID,
+    cancels: [{
+      symbolID: input.symbolID,
+      clOrdID: input.clOrdID,
+      orderID: input.orderID,
+    }],
+  };
+}
+
+export function serializeBatchCancelOrderParams(params: BatchCancelOrderParams): string {
+  return JSON.stringify(params);
+}
+
+export function computeActionPayloadHash(actionType: string, params: unknown): `0x${string}` {
+  if (!actionType) throw new Error('SoDEX action type is required');
+  const compactJson = JSON.stringify({ type: actionType, params });
+  return keccak256(stringToHex(compactJson));
 }
 
 /** payloadHash = keccak256(compact_json({type, params})) — must be byte-identical to Go's json.Marshal. */

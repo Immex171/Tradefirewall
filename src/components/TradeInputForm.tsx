@@ -15,12 +15,8 @@ import {
   UserCustomRiskProfile,
 } from '@/lib/riskProfiles';
 import { CustomRiskProfileEditor } from '@/components/CustomRiskProfileEditor';
+import type { SodexSpotMarketOption } from '@/lib/sodexMarkets';
 import { getSodexSpotSymbolError } from '@/lib/sodexSymbols';
-
-interface Currency {
-  symbol: string;
-  name: string;
-}
 
 interface TradeInputFormProps {
   onSubmit: (tradeInput: TradeInput) => void;
@@ -40,7 +36,8 @@ export function TradeInputForm({ onSubmit, isLoading = false }: TradeInputFormPr
   const [showProfileEditor, setShowProfileEditor] = useState(false);
 
   // Combobox state
-  const [currencies, setCurrencies] = useState<Currency[]>([]);
+  const [currencies, setCurrencies] = useState<SodexSpotMarketOption[]>([]);
+  const [marketLoadError, setMarketLoadError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
   // Which option the keyboard is currently on. -1 means the input itself owns focus, which is
@@ -52,14 +49,20 @@ export function TradeInputForm({ onSubmit, isLoading = false }: TradeInputFormPr
   const [loadingCurrencies, setLoadingCurrencies] = useState(true);
   const comboRef = useRef<HTMLDivElement>(null);
 
-  // Fetch currency list once on mount
+  // Fetch the configured network's actual tradable SoDEX Spot markets.
   useEffect(() => {
-    fetch('/api/sosovalue/currencies')
-      .then((r) => r.json())
-      .then((d) => {
-        if (Array.isArray(d.currencies)) setCurrencies(d.currencies);
+    fetch('/api/sodex/symbols')
+      .then(async (response) => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Unable to load SoDEX Spot markets');
+        if (!Array.isArray(data.markets)) throw new Error('SoDEX market list response was invalid');
+        setCurrencies(data.markets);
+        setMarketLoadError(null);
       })
-      .catch(() => {/* silently degrade to manual input */})
+      .catch((error: unknown) => {
+        setCurrencies([]);
+        setMarketLoadError(error instanceof Error ? error.message : 'Unable to load SoDEX Spot markets');
+      })
       .finally(() => setLoadingCurrencies(false));
   }, []);
 
@@ -94,15 +97,13 @@ export function TradeInputForm({ onSubmit, isLoading = false }: TradeInputFormPr
   }, []);
 
   const filtered = query.length === 0
-    ? currencies.filter((currency) => !getSodexSpotSymbolError(currency.symbol)).slice(0, 50)
+    ? currencies
     : currencies
         .filter(
           (c) =>
-            !getSodexSpotSymbolError(c.symbol) &&
             (c.symbol.toLowerCase().includes(query.toLowerCase()) ||
               c.name.toLowerCase().includes(query.toLowerCase()))
         )
-        .slice(0, 50);
 
   const selectSymbol = (symbol: string) => {
     setFormData((f) => ({ ...f, symbol }));
@@ -257,8 +258,11 @@ export function TradeInputForm({ onSubmit, isLoading = false }: TradeInputFormPr
               </div>
               {currencies.length > 0 && (
                 <p className="text-xs text-text-secondary">
-                  {currencies.filter((currency) => !getSodexSpotSymbolError(currency.symbol)).length} supported assets
+                  {currencies.length} SoDEX Spot markets supported by both providers
                 </p>
+              )}
+              {marketLoadError && (
+                <p role="alert" className="text-xs text-danger">{marketLoadError}</p>
               )}
               {getSodexSpotSymbolError(formData.symbol) && (
                 <p role="alert" className="text-xs text-danger">

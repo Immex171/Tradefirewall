@@ -235,6 +235,11 @@ class SoSoValueAPI {
     return hit.currency_id;
   }
 
+  async getCurrencySymbols(): Promise<string[]> {
+    const rows = await this.getCurrencyRows();
+    return rows.map((row) => row.symbol.toUpperCase());
+  }
+
   private num(v: unknown, fallback = 0): number {
     if (v === null || v === undefined) return fallback;
     const n = typeof v === 'string' ? parseFloat(v) : Number(v);

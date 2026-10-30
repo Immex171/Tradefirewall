@@ -3,7 +3,6 @@
 import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { SiteNav } from '@/components/SiteNav';
-import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -14,6 +13,7 @@ import { RiskExplanationBox } from '@/components/RiskExplanationBox';
 import { ConfirmationGate } from '@/components/ConfirmationGate';
 import { SoDEXOrderPlacement } from '@/components/SoDEXOrderPlacement';
 import { SoDEXAccountManagement } from '@/components/SoDEXAccountManagement';
+import { SoDEXBuilderIdCard } from '@/components/SoDEXBuilderIdCard';
 import { TradeInput, RiskAnalysis, saferPositionAmount } from '@/lib/riskEngine';
 import { RiskExplanation } from '@/lib/riskExplanation';
 import { storageManager, WatchlistItem, SavedReport } from '@/lib/storage';
@@ -34,6 +34,11 @@ import {
 
 /** How many stored reports the "Recent Risk Checks" table shows. */
 const RECENT_REPORT_LIMIT = 5;
+const CHECK_TRADE_TABS = [
+  { id: 'trade', label: 'Trade analysis' },
+  { id: 'account', label: 'SoDEX account' },
+  { id: 'history', label: 'History & watchlist' },
+] as const;
 
 function savedReportFieldsFromApiResult(result: {
   tradeInput: TradeInput;
@@ -87,7 +92,6 @@ const CLIENT_ANALYSIS_TIMEOUT_MS = 30_000;
 const ELAPSED_TICK_MS = 1000;
 
 export default function CheckTradePage() {
-  const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [beginnerMode, setBeginnerMode] = useState(false);
@@ -100,13 +104,16 @@ export default function CheckTradePage() {
   const beginnerComboRef = useRef<HTMLDivElement>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
+  const [analysisModalOpen, setAnalysisModalOpen] = useState(false);
   const [showConfirmation, setShowConfirmation] = useState(false);
+  const [activeTab, setActiveTab] = useState<'trade' | 'account' | 'history'>('trade');
   const [currentTrade, setCurrentTrade] = useState<TradeInput | null>(null);
   const [exitIntent, setExitIntent] = useState<{ symbol: string; quantity: number } | null>(null);
   const [watchlist, setWatchlist] = useState<WatchlistItem[]>([]);
   const [recentReports, setRecentReports] = useState<TradeCheckRow[]>([]);
   /** Aborts the in-flight request. Also drives the Cancel button. */
   const abortRef = useRef<AbortController | null>(null);
+  const analysisDialogRef = useRef<HTMLDialogElement>(null);
 
   // Which factors in the displayed score are neutral placeholders rather than measurements.
   // Derived, so it can never disagree with the analysis it describes.
@@ -167,6 +174,13 @@ export default function CheckTradePage() {
     return () => window.removeEventListener('focus', handleFocus);
   }, []);
 
+  useEffect(() => {
+    const dialog = analysisDialogRef.current;
+    if (!dialog) return;
+    if (analysisModalOpen && !dialog.open) dialog.showModal();
+    if (!analysisModalOpen && dialog.open) dialog.close();
+  }, [analysisModalOpen]);
+
   const handleBeginnerSubmit = () => {
     const sym = beginnerSymbol.trim().toUpperCase();
     const amt = parseFloat(beginnerAmount);
@@ -188,6 +202,7 @@ export default function CheckTradePage() {
   };
 
   const handleAnalyzeExit = (exit: { symbol: string; quantity: number; amountUsd: number }) => {
+    setActiveTab('trade');
     setExitIntent({ symbol: exit.symbol, quantity: exit.quantity });
     setAnalysisResult(null);
     handleTradeSubmit({
@@ -205,6 +220,7 @@ export default function CheckTradePage() {
     abortRef.current?.abort();
 
     setIsLoading(true);
+    setAnalysisModalOpen(true);
     setElapsedSeconds(0);
     // The previous result is deliberately NOT cleared here. If this run fails, the user keeps
     // the analysis they were reading instead of being dropped back to an empty page.
@@ -246,6 +262,7 @@ export default function CheckTradePage() {
 
       const result = await response.json();
       setAnalysisResult(result);
+      setAnalysisModalOpen(true);
 
       try {
         storageManager.saveReport(savedReportFieldsFromApiResult(result));
@@ -278,6 +295,7 @@ export default function CheckTradePage() {
 
       // Errors are actionable, so they need longer than the 4s default to read and act on.
       toast.error(info.message, 8000);
+      setAnalysisModalOpen(false);
       if (info.detail && !cancelled) {
         toast.show('info', info.detail, 9000);
       }
@@ -291,6 +309,7 @@ export default function CheckTradePage() {
 
   const handleCancelAnalysis = () => {
     abortRef.current?.abort();
+    setAnalysisModalOpen(false);
   };
 
   const handleReduceSize = () => {
@@ -316,6 +335,7 @@ export default function CheckTradePage() {
   };
 
   const handleCancelTrade = () => {
+    setAnalysisModalOpen(false);
     setShowConfirmation(false);
     toast.info('Trade cancelled.');
     
@@ -372,6 +392,8 @@ export default function CheckTradePage() {
   };
 
   const handleNewAnalysis = () => {
+    setAnalysisModalOpen(false);
+    setActiveTab('trade');
     setAnalysisResult(null);
     setExitIntent(null);
     setShowConfirmation(false);
@@ -388,11 +410,10 @@ export default function CheckTradePage() {
   };
 
   const handleViewPreviousReports = () => {
+    setActiveTab('history');
     const reports = storageManager.getReports();
     if (reports.length === 0) {
       toast.info('No saved reports yet. Analyze and save your first trade report.');
-    } else {
-      router.push('/dashboard#reports');
     }
   };
 
@@ -531,6 +552,17 @@ export default function CheckTradePage() {
                 </p>
               </div>
               <div className="flex flex-col sm:flex-row gap-4">
+                {analysisResult && (
+                  <Button
+                    onClick={() => {
+                      setActiveTab('trade');
+                      setAnalysisModalOpen(true);
+                    }}
+                    className="btn-secondary px-6 py-2"
+                  >
+                    View latest analysis
+                  </Button>
+                )}
                 <Button onClick={handleNewAnalysis} className="btn-primary px-6 py-2">
                   New Analysis
                 </Button>
@@ -539,7 +571,7 @@ export default function CheckTradePage() {
             </div>
 
             {/* Mode toggle */}
-            <div className="flex items-center gap-3 mb-6">
+            {activeTab === 'trade' && <div className="flex items-center gap-3 mb-6">
               <button
                 onClick={() => { setBeginnerMode(false); setShowAdvanced(false); }}
                 className={`px-4 py-1.5 rounded-full text-sm font-medium border transition-colors ${!beginnerMode ? 'bg-primary text-background border-primary' : 'border-border text-text-secondary hover:text-text-primary'}`}
@@ -555,9 +587,56 @@ export default function CheckTradePage() {
               {beginnerMode && (
                 <span className="text-xs text-text-secondary">New to crypto? Start here — just enter a token and amount.</span>
               )}
+            </div>}
+          </div>
+
+          <div className="col-span-12">
+            <SoDEXBuilderIdCard />
+          </div>
+
+          <div className="col-span-12">
+            <div role="tablist" aria-label="Trade workspace" className="flex gap-2 overflow-x-auto border-b border-border">
+              {CHECK_TRADE_TABS.map((tab) => (
+                <button
+                  key={tab.id}
+                  id={`check-trade-tab-${tab.id}`}
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === tab.id}
+                  aria-controls={`check-trade-panel-${tab.id}`}
+                  tabIndex={activeTab === tab.id ? 0 : -1}
+                  onClick={() => setActiveTab(tab.id)}
+                  onKeyDown={(event) => {
+                    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+                    event.preventDefault();
+                    const currentIndex = CHECK_TRADE_TABS.findIndex((tab) => tab.id === activeTab);
+                    const direction = event.key === 'ArrowRight' ? 1 : -1;
+                    const nextTab = CHECK_TRADE_TABS[
+                      (currentIndex + direction + CHECK_TRADE_TABS.length) % CHECK_TRADE_TABS.length
+                    ].id;
+                    setActiveTab(nextTab);
+                    document.getElementById(`check-trade-tab-${nextTab}`)?.focus();
+                  }}
+                  className={`shrink-0 border-b-2 px-3 py-3 text-sm transition-colors ${
+                    activeTab === tab.id
+                      ? 'border-primary font-medium text-text-primary'
+                      : 'border-transparent text-text-secondary hover:text-text-primary'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
             </div>
           </div>
 
+          <div
+            id="check-trade-panel-trade"
+            role="tabpanel"
+            aria-labelledby="check-trade-tab-trade"
+            hidden={activeTab !== 'trade'}
+            style={{ display: activeTab === 'trade' ? 'grid' : 'none' }}
+            className="col-span-12 grid grid-cols-12 gap-6"
+          >
           {/* Beginner mode form */}
           {beginnerMode && (
             <div className="col-span-12 lg:col-span-7">
@@ -666,10 +745,6 @@ export default function CheckTradePage() {
           </div>
           )}
 
-          <div className="col-span-12">
-            <SoDEXAccountManagement onAnalyzeExit={handleAnalyzeExit} />
-          </div>
-
           {/* Live Trade Preview - Right Column */}
           <div className="col-span-12 lg:col-span-5 space-y-6">
             {currentTrade && (
@@ -705,6 +780,42 @@ export default function CheckTradePage() {
             )}
           </div>
 
+          <dialog
+            ref={analysisDialogRef}
+            aria-labelledby="analysis-modal-title"
+            className="fixed inset-0 m-0 h-dvh max-h-none w-screen max-w-none overflow-y-auto border-0 bg-black/70 p-3 text-text-primary backdrop:bg-black/70 sm:p-6"
+            onCancel={(event) => {
+              event.preventDefault();
+              if (!isLoading) setAnalysisModalOpen(false);
+            }}
+            onClose={() => setAnalysisModalOpen(false)}
+            onClick={(event) => {
+              if (event.target === event.currentTarget && !isLoading) setAnalysisModalOpen(false);
+            }}
+          >
+            <div className="mx-auto my-3 w-full max-w-6xl rounded-xl border border-border bg-background p-4 shadow-2xl sm:my-6 sm:p-6">
+              <div className="mb-5 flex items-center justify-between gap-4 border-b border-border pb-4">
+                <div>
+                  <h2 id="analysis-modal-title" className="text-xl font-semibold text-text-primary">
+                    {isLoading ? `Analyzing ${currentTrade?.symbol ?? 'trade'}` : 'Trade analysis'}
+                  </h2>
+                  {currentTrade && !isLoading && (
+                    <p className="mt-1 text-sm text-text-secondary">
+                      {currentTrade.action} {currentTrade.symbol} · ${currentTrade.amount.toLocaleString()}
+                    </p>
+                  )}
+                </div>
+                {!isLoading && (
+                  <Button
+                    onClick={() => setAnalysisModalOpen(false)}
+                    className="btn-secondary shrink-0"
+                    aria-label="Close trade analysis"
+                  >
+                    Close
+                  </Button>
+                )}
+              </div>
+              <div className="grid grid-cols-12 gap-6">
           {/* Live integrations proof */}
           {analysisResult && !isLoading && (
             <div className="col-span-12 grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -1038,7 +1149,30 @@ export default function CheckTradePage() {
               />
             </div>
           )}
+              </div>
+            </div>
+          </dialog>
+          </div>
 
+          <div
+            id="check-trade-panel-account"
+            role="tabpanel"
+            aria-labelledby="check-trade-tab-account"
+            hidden={activeTab !== 'account'}
+            style={{ display: activeTab === 'account' ? 'block' : 'none' }}
+            className="col-span-12"
+          >
+            <SoDEXAccountManagement onAnalyzeExit={handleAnalyzeExit} />
+          </div>
+
+          <div
+            id="check-trade-panel-history"
+            role="tabpanel"
+            aria-labelledby="check-trade-tab-history"
+            hidden={activeTab !== 'history'}
+            style={{ display: activeTab === 'history' ? 'grid' : 'none' }}
+            className="col-span-12 grid grid-cols-12 gap-6"
+          >
           {/* Watchlist */}
           {watchlist.length > 0 && (
             <div className="col-span-12 lg:col-span-6">
@@ -1155,6 +1289,7 @@ export default function CheckTradePage() {
                 </p>
               </CardContent>
             </Card>
+          </div>
           </div>
 
         </div>

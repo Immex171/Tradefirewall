@@ -1,5 +1,7 @@
 export interface SodexWalletProvider {
   request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
+  on?: (event: 'accountsChanged', listener: (accounts: unknown) => void) => void;
+  removeListener?: (event: 'accountsChanged', listener: (accounts: unknown) => void) => void;
 }
 
 declare global {

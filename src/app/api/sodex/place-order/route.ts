@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sodexAPI } from '@/lib/sodex';
 import { getSodexSpotSymbolError } from '@/lib/sodexSymbols';
+import { fetchBuilderApprovals, getConfiguredBuilderID, validateBuilderFeeRate } from '@/lib/sodexBuilder';
 import {
   OrderSide,
   OrderType,
@@ -53,10 +54,18 @@ async function handlePrepare(body: {
   maxSlippagePct?: number;
   decision?: string;
   exitQuantity?: number;
+  includeBuilderFee?: boolean;
+  builderFee?: number;
 }) {
   const { symbol, side, amountUsd, walletAddress, decision } = body;
 
-  if (!symbol || !side || !amountUsd || amountUsd <= 0 || !walletAddress) {
+  if (
+    !symbol ||
+    (side !== 'buy' && side !== 'sell') ||
+    !amountUsd ||
+    amountUsd <= 0 ||
+    !walletAddress
+  ) {
     return NextResponse.json({ error: 'Invalid order parameters' }, { status: 400 });
   }
   const symbolError = getSodexSpotSymbolError(symbol);
@@ -154,6 +163,68 @@ async function handlePrepare(body: {
   }
 
   const clOrdID = generateClOrdID();
+  const includeBuilderFee = body.includeBuilderFee === true;
+  let builderID: string | null = null;
+  let requestedBuilderFee = 0;
+  let builderPreview: {
+    enabled: boolean;
+    builderID: string | null;
+    requestedFeeRate: number;
+    approvedFeeRate: number;
+    estimatedFee: number;
+    feeAsset: string;
+    appliesToSide: boolean;
+    note: string;
+  } = {
+    enabled: false,
+    builderID: null,
+    requestedFeeRate: 0,
+    approvedFeeRate: 0,
+    estimatedFee: 0,
+    feeAsset: 'vUSDC',
+    appliesToSide: false,
+    note: 'Builder fee disabled for this order.',
+  };
+  if (includeBuilderFee) {
+    if (!isBuy) {
+      try {
+        builderID = getConfiguredBuilderID();
+        if (!builderID) throw new Error('TradeFirewall Builder Codes are not configured.');
+        requestedBuilderFee = validateBuilderFeeRate(body.builderFee);
+        if (requestedBuilderFee <= 0) throw new Error('Choose a non-zero builder fee rate.');
+
+        const approvals = await fetchBuilderApprovals(walletAddress);
+        const spotApproval = approvals.spot.find((approval) => approval.builderID === builderID);
+        if (!spotApproval || spotApproval.feeRate <= 0) {
+          throw new Error('The connected wallet has no active SoDEX Spot approval for this builder.');
+        }
+        if (requestedBuilderFee > spotApproval.feeRate) {
+          throw new Error('The requested builder fee exceeds the verified Spot approval maximum.');
+        }
+        builderPreview = {
+          enabled: true,
+          builderID,
+          requestedFeeRate: requestedBuilderFee,
+          approvedFeeRate: spotApproval.feeRate,
+          estimatedFee: notional * requestedBuilderFee / 100_000,
+          feeAsset: 'vUSDC',
+          appliesToSide: true,
+          note: 'Estimated from the protected order notional; actual fee depends on eligible fills.',
+        };
+      } catch (error) {
+        return NextResponse.json(
+          {
+            error: error instanceof Error ? error.message : 'Unable to verify builder fee approval.',
+            errorType: 'BUILDER_APPROVAL_UNVERIFIED',
+          },
+          { status: 409 }
+        );
+      }
+    } else {
+      builderPreview.note = 'SoDEX Spot builder fees do not apply to the buy side.';
+    }
+  }
+
   const orderParams = buildBatchNewOrderParams({
     accountID: accountState.accountID,
     symbolID: rules.symbolID,
@@ -163,6 +234,9 @@ async function handlePrepare(body: {
     timeInForce: TimeInForce.IOC,
     price: protectionPrice,
     quantity,
+    ...(builderPreview.enabled && builderID
+      ? { builder: { id: builderID, fee: requestedBuilderFee } }
+      : {}),
   });
   const payloadHash = computePayloadHash(orderParams);
   const nonce = generateNonce();
@@ -186,6 +260,7 @@ async function handlePrepare(body: {
       orderType: 'LIMIT',
       timeInForce: 'IOC',
       network: 'testnet',
+      builder: builderPreview,
     },
   });
 }

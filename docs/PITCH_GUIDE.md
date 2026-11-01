@@ -309,7 +309,7 @@ Expected: Show custom profile editor
 ### Red Flags to Avoid
 - Don't claim features that aren't built
 - Don't overstate historical data coverage
-- Don't promise mainnet execution (it's testnet-only)
+- Don't imply Mainnet is the default; it requires explicit configuration and live wallet signing
 - Don't use jargon without explanation
 - Don't get defensive during questions
 

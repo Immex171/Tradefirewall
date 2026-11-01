@@ -9,6 +9,7 @@ import {
   sanitizeProfileConfig,
   PROFILE_LIMITS,
 } from '@/lib/riskProfiles';
+import { getConfiguredSodexNetwork } from '@/lib/sodexNetwork';
 
 const VALID_ACTIONS = new Set(['buy', 'sell']);
 const VALID_HOLDING_PERIODS = new Set(['intraday', '1day', '7days', '30days']);
@@ -84,7 +85,8 @@ export async function POST(request: NextRequest) {
     tradeInput.symbol = tradeInput.symbol.toUpperCase();
 
     // Analyze trade risk using real API data
-    const riskAnalysis = await riskEngine.analyzeTradeRisk(tradeInput);
+    const network = getConfiguredSodexNetwork(request.cookies.get('sodex-network')?.value);
+    const riskAnalysis = await riskEngine.analyzeTradeRisk(tradeInput, network);
     
     // Generate risk intelligence explanation based on real risk analysis
     const riskExplanation = riskExplanationGenerator.generateExplanation(riskAnalysis, tradeInput);

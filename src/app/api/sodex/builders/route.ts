@@ -1,22 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { sodexAPI } from '@/lib/sodex';
+import { getSodexAPI } from '@/lib/sodex';
+import { getConfiguredSodexNetwork, type SodexNetwork } from '@/lib/sodexNetwork';
 import {
   buildBuilderApprovalTypedData,
   fetchBuilderApprovals,
   getConfiguredBuilderID,
-  getSodexTestnetApiRoot,
+  getSodexApiRoot,
   recoverBuilderApprovalSigner,
   toSodexBuilderApiSign,
   validateBuilderFeeRate,
+  verifyBuilderApprovalState,
 } from '@/lib/sodexBuilder';
-import { SODEX_TESTNET_CHAIN_ID } from '@/lib/sodexOrderSigning';
+import { getSodexChainId } from '@/lib/sodexOrderSigning';
 
 const WALLET_ADDRESS = /^0x[a-fA-F0-9]{40}$/;
 
 export async function GET(request: NextRequest) {
-  if (sodexAPI.configuredNetwork !== 'testnet') {
-    return NextResponse.json({ error: 'Builder Codes are available on Testnet only.' }, { status: 403 });
-  }
+  const network = getConfiguredSodexNetwork(request.cookies.get('sodex-network')?.value);
+  const sodexAPI = getSodexAPI(network);
   const address = request.nextUrl.searchParams.get('address') ?? '';
   if (!WALLET_ADDRESS.test(address)) {
     return NextResponse.json({ error: 'Provide a valid wallet address.' }, { status: 400 });
@@ -25,12 +26,12 @@ export async function GET(request: NextRequest) {
   try {
     const [account, approvals] = await Promise.all([
       sodexAPI.getAccountState(address),
-      fetchBuilderApprovals(address),
+      fetchBuilderApprovals(address, network),
     ]);
     return NextResponse.json({
-      network: 'testnet',
+      network,
       accountID: account.accountID,
-      builderID: getConfiguredBuilderID(),
+      builderID: getConfiguredBuilderID(network),
       approvals,
       fetchedAt: Date.now(),
     });
@@ -44,9 +45,8 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  if (sodexAPI.configuredNetwork !== 'testnet') {
-    return NextResponse.json({ error: 'Builder Codes are available on Testnet only.' }, { status: 403 });
-  }
+  const network = getConfiguredSodexNetwork(request.cookies.get('sodex-network')?.value);
+  const sodexAPI = getSodexAPI(network);
 
   try {
     const body = await request.json() as {
@@ -55,15 +55,18 @@ export async function POST(request: NextRequest) {
       maxFeeRate?: number;
       nonce?: number;
       signature?: string;
+      network?: SodexNetwork;
     };
     if (!WALLET_ADDRESS.test(body.address ?? '')) {
       return NextResponse.json({ error: 'Provide a valid wallet address.' }, { status: 400 });
     }
 
-    const builderID = getConfiguredBuilderID();
+    const builderID = getConfiguredBuilderID(network);
     if (!builderID) {
       return NextResponse.json(
-        { error: 'Set SODEX_BUILDER_ID to the TradeFirewall SoDEX Testnet account ID before enabling Builder Codes.' },
+        {
+          error: `Set ${network === 'testnet' ? 'SODEX_BUILDER_ID' : 'SODEX_MAINNET_BUILDER_ID'} to the TradeFirewall SoDEX ${network} account ID before enabling Builder Codes.`,
+        },
         { status: 503 }
       );
     }
@@ -71,12 +74,18 @@ export async function POST(request: NextRequest) {
     if (body.action !== 'prepare' && body.action !== 'submit') {
       return NextResponse.json({ error: 'Use action "prepare" or "submit".' }, { status: 400 });
     }
+    if (body.action === 'submit' && body.network !== network) {
+      return NextResponse.json(
+        { error: 'The selected SoDEX network changed after signing. Prepare and sign the Builder action again.' },
+        { status: 409 }
+      );
+    }
 
     const account = await sodexAPI.getAccountState(body.address!);
     const maxFeeRate = validateBuilderFeeRate(body.maxFeeRate);
 
     if (body.action === 'prepare') {
-      const approvals = await fetchBuilderApprovals(body.address!);
+      const approvals = await fetchBuilderApprovals(body.address!, network);
       if (maxFeeRate > 0) {
         const activeBuilderIDs = new Set([
           ...approvals.spot.filter((item) => item.feeRate > 0).map((item) => item.builderID),
@@ -96,9 +105,10 @@ export async function POST(request: NextRequest) {
         builderID,
         maxFeeRate,
         nonce,
+        network,
       });
       return NextResponse.json({
-        network: 'testnet',
+        network,
         builderID,
         accountID: account.accountID,
         maxFeeRate,
@@ -116,6 +126,7 @@ export async function POST(request: NextRequest) {
       builderID,
       maxFeeRate,
       nonce: body.nonce,
+      network,
     });
     const recoveredAddress = await recoverBuilderApprovalSigner(typedData, body.signature as `0x${string}`);
     if (recoveredAddress.toLowerCase() !== body.address!.toLowerCase()) {
@@ -123,7 +134,7 @@ export async function POST(request: NextRequest) {
     }
 
     const apiSign = toSodexBuilderApiSign(body.signature);
-    const endpoint = `${getSodexTestnetApiRoot()}/user/${encodeURIComponent(body.address!)}/builders`;
+    const endpoint = `${getSodexApiRoot(network)}/user/${encodeURIComponent(body.address!)}/builders`;
     let submitResponse: Response | null = null;
     let submitError: unknown = null;
     try {
@@ -134,7 +145,7 @@ export async function POST(request: NextRequest) {
           Accept: 'application/json',
           'X-API-Sign': apiSign,
           'X-API-Nonce': String(body.nonce),
-          'X-API-Chain': String(SODEX_TESTNET_CHAIN_ID),
+          'X-API-Chain': String(getSodexChainId(network)),
         },
         body: JSON.stringify({
           accountID: account.accountID,
@@ -158,7 +169,7 @@ export async function POST(request: NextRequest) {
     // before reporting failure or allowing the client to prepare a fresh signature.
     let verifiedApprovals;
     try {
-      verifiedApprovals = await fetchBuilderApprovals(body.address!);
+      verifiedApprovals = await fetchBuilderApprovals(body.address!, network);
     } catch (verificationError) {
       console.error('Unable to verify SoDEX builder status after submission:', verificationError);
       return NextResponse.json(
@@ -169,12 +180,7 @@ export async function POST(request: NextRequest) {
         { status: 502 }
       );
     }
-    const spotApproval = verifiedApprovals.spot.find((item) => item.builderID === builderID);
-    const perpsApproval = verifiedApprovals.perps.find((item) => item.builderID === builderID);
-    const expectedRate = maxFeeRate;
-    const verified = maxFeeRate === 0
-      ? !spotApproval?.feeRate && !perpsApproval?.feeRate
-      : spotApproval?.feeRate === expectedRate && perpsApproval?.feeRate === expectedRate;
+    const verified = verifyBuilderApprovalState(verifiedApprovals, builderID, maxFeeRate);
 
     if (!verified) {
       const details = acceptedByApi

@@ -254,7 +254,7 @@ export default function APIPage() {
             <Card className="terminal-card border-primary/20">
               <CardHeader>
                 <div className="flex items-center justify-between">
-                  <CardTitle className="text-card-heading">Place Signed Order (testnet)</CardTitle>
+                  <CardTitle className="text-card-heading">Place Signed Order</CardTitle>
                   <Badge className="bg-primary text-background">POST</Badge>
                 </div>
               </CardHeader>
@@ -263,16 +263,14 @@ export default function APIPage() {
                   POST /api/sodex/place-order
                 </div>
                 <p>
-                  Submits a client-signed order to the SoDEX <span className="font-mono">testnet</span> spot API. Two
-                  constraints are enforced server-side and are not configurable: the deployment must be running with{' '}
-                  <span className="font-mono">SODEX_USE_TESTNET=true</span>, and the request is routed to the testnet
-                  gateway regardless of payload content. If either fails the route returns{' '}
-                  <span className="font-mono">403 MAINNET_DISABLED</span>. Mainnet execution is not implemented in this
-                  app.
+                  Submits a client-signed order to the selected SoDEX Spot API. Choose Testnet or Mainnet in the
+                  Trade Risk Engine; Testnet is the default. The <span className="font-mono">SODEX_USE_TESTNET</span>
+                  setting remains the initial default when no browser selection exists. Mainnet orders use real
+                  funds and require separate Mainnet Builder settings and a wallet on the matching chain.
                 </p>
                 <p>
                   The signature is produced by the user&apos;s wallet in the browser; this route forwards the already-signed
-                  payload. It cannot move mainnet funds under any input.
+                  payload. The private key never leaves the wallet.
                 </p>
               </CardContent>
             </Card>

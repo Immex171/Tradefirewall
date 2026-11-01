@@ -1,12 +1,14 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { TradeInput, Decision } from '@/lib/riskEngine';
 import { toast } from '@/lib/toast';
-import { ensureSodexTestnetChain } from '@/lib/sodexWallet';
+import { ensureSodexChain, fetchSodexNetwork } from '@/lib/sodexWallet';
+import type { SodexNetwork } from '@/lib/sodexOrderSigning';
+import { getSodexOrderReviewSignature } from '@/lib/sodexOrderReview';
 import { useWalletConnection } from '@/components/WalletConnectionProvider';
 
 interface SoDEXOrderPlacementProps {
@@ -39,7 +41,7 @@ interface PreparedOrder {
     slippagePct: number;
     orderType: string;
     timeInForce: string;
-    network: string;
+    network: SodexNetwork;
     builder: {
       enabled: boolean;
       builderID: string | null;
@@ -54,6 +56,7 @@ interface PreparedOrder {
 }
 
 interface BuilderStatus {
+  network: SodexNetwork;
   builderID: string | null;
   approvals: {
     spot: Array<{ builderID: string; feeRate: number }>;
@@ -66,8 +69,10 @@ interface OrderResult {
   orderID: number | null;
   clOrdID: string;
   error?: string;
-  network: string;
+  network: SodexNetwork;
   timestamp: number;
+  submittedQuantity?: string;
+  protectionPrice?: string;
 }
 
 type Stage = 'idle' | 'connecting' | 'connected' | 'preparing' | 'ready' | 'signing' | 'submitting' | 'done' | 'error';
@@ -83,6 +88,7 @@ export function SoDEXOrderPlacement({
   const [executionPreview, setExecutionPreview] = useState<ExecutionPreviewData | null>(null);
   const [prepared, setPrepared] = useState<PreparedOrder | null>(null);
   const [preparedForAddress, setPreparedForAddress] = useState<string | null>(null);
+  const [preparedReviewSignature, setPreparedReviewSignature] = useState<string | null>(null);
   const [result, setResult] = useState<OrderResult | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [errorType, setErrorType] = useState<string | null>(null);
@@ -91,16 +97,44 @@ export function SoDEXOrderPlacement({
   const [builderStatusAddress, setBuilderStatusAddress] = useState<string | null>(null);
   const [builderStatusError, setBuilderStatusError] = useState<string | null>(null);
   const [builderFeeRate, setBuilderFeeRate] = useState(90);
+  const builderFeeRateRef = useRef(builderFeeRate);
+  const [sodexNetwork, setSodexNetwork] = useState<SodexNetwork>('testnet');
+  const [networkError, setNetworkError] = useState<string | null>(null);
   const [builderOptInAddress, setBuilderOptInAddress] = useState<string | null>(null);
   const [builderActionBusy, setBuilderActionBusy] = useState(false);
 
   const canExecute = decision === 'APPROVE' || decision === 'CAUTION';
   const includeBuilderFee = !!walletAddress && builderOptInAddress === walletAddress;
+  const reviewSignature = getSodexOrderReviewSignature({
+    walletAddress,
+    network: sodexNetwork,
+    symbol: tradeInput.symbol,
+    side: tradeInput.action,
+    amount: tradeInput.amount,
+    decision,
+    riskScore,
+    exitQuantity: exitQuantity ?? null,
+    maxSlippagePct,
+    includeBuilderFee,
+    builderFeeRate,
+  });
+  const preparedReviewIsCurrent = preparedReviewSignature === reviewSignature;
   const visibleBuilderStatus = builderStatusAddress === walletAddress ? builderStatus : null;
   const activeSpotApproval = visibleBuilderStatus?.approvals.spot.find(
     (approval) => approval.builderID === visibleBuilderStatus.builderID
   );
   const approvedSpotFeeRate = activeSpotApproval?.feeRate ?? 0;
+
+  const invalidatePreparedReview = useCallback(() => {
+    setPrepared(null);
+    setPreparedForAddress(null);
+    setPreparedReviewSignature(null);
+    setStage((current) => current === 'ready' ? 'connected' : current);
+  }, []);
+
+  useEffect(() => {
+    builderFeeRateRef.current = builderFeeRate;
+  }, [builderFeeRate]);
 
   const refreshBuilderStatus = useCallback(async () => {
     if (!walletAddress) return;
@@ -111,17 +145,21 @@ export function SoDEXOrderPlacement({
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || 'Unable to verify builder approval status.');
       setBuilderStatus(body as BuilderStatus);
+      setSodexNetwork(body.network);
       setBuilderStatusAddress(walletAddress);
       setBuilderStatusError(null);
       const currentSpotApproval = body.approvals?.spot?.find(
         (approval: { builderID: string }) => approval.builderID === body.builderID
       );
-      if (currentSpotApproval?.feeRate > 0) setBuilderFeeRate(currentSpotApproval.feeRate);
+      if (currentSpotApproval?.feeRate > 0 && currentSpotApproval.feeRate !== builderFeeRateRef.current) {
+        invalidatePreparedReview();
+        setBuilderFeeRate(currentSpotApproval.feeRate);
+      }
     } catch (error) {
       setBuilderStatus(null);
       setBuilderStatusError(error instanceof Error ? error.message : 'Unable to verify builder approval status.');
     }
-  }, [walletAddress]);
+  }, [invalidatePreparedReview, walletAddress]);
 
   useEffect(() => {
     if (!walletAddress) {
@@ -130,6 +168,24 @@ export function SoDEXOrderPlacement({
     // eslint-disable-next-line react-hooks/set-state-in-effect -- refresh approval state for the connected wallet
     void refreshBuilderStatus();
   }, [walletAddress, refreshBuilderStatus]);
+
+  useEffect(() => {
+    let active = true;
+    void fetchSodexNetwork()
+      .then((network) => {
+        if (!active) return;
+        setSodexNetwork(network);
+        setNetworkError(null);
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          setNetworkError(error instanceof Error ? error.message : 'Unable to load the configured SoDEX network.');
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!walletAddress) return;
@@ -155,13 +211,16 @@ export function SoDEXOrderPlacement({
 
   const connectWallet = async () => {
     if (!window.ethereum) {
-      toast.error('No injected wallet found. Install MetaMask or another EIP-1193 wallet to place a testnet order.');
+      toast.error('No injected wallet found. Install MetaMask or another EIP-1193 wallet to place a SoDEX order.');
       return;
     }
     setStage('connecting');
     try {
+      const network = await fetchSodexNetwork();
+      setSodexNetwork(network);
+      setNetworkError(null);
       await requestWalletConnection();
-      await ensureSodexTestnetChain();
+      await ensureSodexChain(network);
 
       setStage('connected');
     } catch (error) {
@@ -172,6 +231,7 @@ export function SoDEXOrderPlacement({
 
   const prepareOrder = async () => {
     if (!walletAddress) return;
+    const reviewSignatureAtPrepare = reviewSignature;
     setStage('preparing');
     setErrorMessage(null);
     setErrorType(null);
@@ -198,7 +258,9 @@ export function SoDEXOrderPlacement({
         throw new Error(json.error || 'Failed to prepare order');
       }
       setPrepared(json);
+      setSodexNetwork(json.preview.network);
       setPreparedForAddress(walletAddress);
+      setPreparedReviewSignature(reviewSignatureAtPrepare);
       setStage('ready');
     } catch (error) {
       setStage('connected');
@@ -211,7 +273,9 @@ export function SoDEXOrderPlacement({
     setBuilderActionBusy(true);
     setBuilderStatusError(null);
     try {
-      await ensureSodexTestnetChain();
+      const network = await fetchSodexNetwork();
+      setSodexNetwork(network);
+      await ensureSodexChain(network);
       const prepareResponse = await fetch('/api/sodex/builders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -219,6 +283,9 @@ export function SoDEXOrderPlacement({
       });
       const preparedAction = await prepareResponse.json();
       if (!prepareResponse.ok) throw new Error(preparedAction.error || 'Unable to prepare builder action.');
+      if (preparedAction.network !== network) {
+        throw new Error('Configured SoDEX network changed. Refresh the page before signing.');
+      }
 
       const signature = await window.ethereum.request({
         method: 'eth_signTypedData_v4',
@@ -233,6 +300,7 @@ export function SoDEXOrderPlacement({
           maxFeeRate,
           nonce: preparedAction.nonce,
           signature,
+          network: preparedAction.network,
         }),
       });
       const result = await submitResponse.json();
@@ -254,10 +322,12 @@ export function SoDEXOrderPlacement({
 
   const signAndSubmit = async () => {
     if (!prepared || !walletAddress || !window.ethereum) return;
-    if (preparedForAddress?.toLowerCase() !== walletAddress.toLowerCase()) {
-      setErrorMessage('The connected wallet changed. Review the order again before signing.');
-      setPrepared(null);
-      setPreparedForAddress(null);
+    if (
+      preparedForAddress?.toLowerCase() !== walletAddress.toLowerCase() ||
+      !preparedReviewIsCurrent
+    ) {
+      setErrorMessage('Order settings changed. Review the order again before signing.');
+      invalidatePreparedReview();
       setStage('connected');
       return;
     }
@@ -267,7 +337,7 @@ export function SoDEXOrderPlacement({
     try {
       // Defensive re-check — the user may have switched networks in their wallet
       // since connecting, and a stale chain would make the signature invalid.
-      await ensureSodexTestnetChain();
+      await ensureSodexChain(prepared.preview.network);
 
       const signature = (await window.ethereum.request({
         method: 'eth_signTypedData_v4',
@@ -284,10 +354,15 @@ export function SoDEXOrderPlacement({
           nonce: prepared.nonce,
           signature,
           walletAddress,
+          network: prepared.preview.network,
         }),
       });
       const json = await res.json();
-      setResult(json);
+      setResult({
+        ...json,
+        submittedQuantity: prepared.preview.quantity,
+        protectionPrice: prepared.preview.protectionPrice,
+      });
       setStage(json.success ? 'done' : 'error');
       if (!json.success) setErrorMessage(json.error || 'Order rejected by SoDEX');
     } catch (error) {
@@ -310,15 +385,18 @@ export function SoDEXOrderPlacement({
     <Card className="terminal-card border-primary/20">
       <CardHeader>
         <CardTitle className="text-card-heading flex items-center justify-between">
-          <span>SoDEX Testnet Execution</span>
-          <Badge variant="outline" className="text-xs border-primary/40 text-primary">Testnet — no real funds</Badge>
+          <span>SoDEX {sodexNetwork === 'testnet' ? 'Testnet' : 'Mainnet'} Execution</span>
+          <Badge variant="outline" className="text-xs border-primary/40 text-primary">
+            {sodexNetwork === 'testnet' ? 'Testnet — no real funds' : 'Mainnet — real funds'}
+          </Badge>
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-5">
+        {networkError && <p role="alert" className="text-sm text-danger">{networkError}</p>}
         {!walletAddress && stage !== 'connecting' && stage !== 'done' && stage !== 'error' && (
           <div className="space-y-3">
             <p className="text-sm text-text-secondary">
-              Connect a wallet to place a real signed order on SoDEX testnet. No wallet is required to analyze risk — only to execute.
+              Connect a wallet to place a signed order on SoDEX {sodexNetwork}. No wallet is required to analyze risk — only to execute.
             </p>
             <Button onClick={connectWallet} className="btn-primary w-full">Connect Wallet</Button>
           </div>
@@ -326,7 +404,7 @@ export function SoDEXOrderPlacement({
 
         {stage === 'connecting' && (
           <p className="text-sm text-text-secondary">
-            Requesting wallet connection… Your wallet may also ask to add or switch to the &ldquo;ValueChain Testnet&rdquo; network — this is required to sign SoDEX orders correctly.
+            Requesting wallet connection… Your wallet may ask to add or switch to the configured SoDEX {sodexNetwork} network — this is required to sign orders correctly.
           </p>
         )}
 
@@ -362,7 +440,10 @@ export function SoDEXOrderPlacement({
                       type="checkbox"
                       checked={includeBuilderFee}
                       disabled={stage === 'preparing' || stage === 'signing' || stage === 'submitting'}
-                      onChange={(event) => setBuilderOptInAddress(event.target.checked ? walletAddress : null)}
+                      onChange={(event) => {
+                        invalidatePreparedReview();
+                        setBuilderOptInAddress(event.target.checked ? walletAddress : null);
+                      }}
                       className="mt-1 accent-primary"
                     />
                     <span>
@@ -388,7 +469,11 @@ export function SoDEXOrderPlacement({
                       max={2000}
                       step={1}
                       value={builderFeeRate}
-                      onChange={(event) => setBuilderFeeRate(Number(event.target.value))}
+                      disabled={stage === 'preparing' || stage === 'signing' || stage === 'submitting'}
+                      onChange={(event) => {
+                        invalidatePreparedReview();
+                        setBuilderFeeRate(Number(event.target.value));
+                      }}
                       className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-text-primary sm:w-40"
                       aria-describedby="builder-fee-rate-help"
                     />
@@ -430,7 +515,7 @@ export function SoDEXOrderPlacement({
 
             {executionPreview && (
               <div className="p-3 bg-surface rounded-lg text-xs text-text-secondary space-y-1">
-                <div className="text-text-primary font-medium mb-1">Execution Preview (SoDEX testnet, live)</div>
+                <div className="text-text-primary font-medium mb-1">Execution Preview (SoDEX {sodexNetwork}, live)</div>
                 <div>Estimated price: ${executionPreview.estimatedPrice.toLocaleString()}</div>
                 <div>Estimated slippage: {(executionPreview.estimatedSlippage * 100).toFixed(2)}%</div>
                 <div>Price impact: {(executionPreview.priceImpact * 100).toFixed(2)}%</div>
@@ -450,7 +535,10 @@ export function SoDEXOrderPlacement({
                 max={5}
                 step={0.1}
                 value={maxSlippagePct}
-                onChange={(e) => setMaxSlippagePct(parseFloat(e.target.value))}
+                onChange={(e) => {
+                  invalidatePreparedReview();
+                  setMaxSlippagePct(parseFloat(e.target.value));
+                }}
                 className="w-full accent-primary"
               />
             </div>
@@ -459,14 +547,18 @@ export function SoDEXOrderPlacement({
               <div className="text-xs text-danger space-y-1">
                 <p>{errorMessage}</p>
                 {errorType === 'NOT_ONBOARDED' && (
-                  <a
-                    href="https://testnet.sodex.com"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-primary underline-offset-2 hover:underline inline-block"
-                  >
-                    Open SoDEX Testnet to connect this wallet and claim faucet funds →
-                  </a>
+                  sodexNetwork === 'testnet' ? (
+                    <a
+                      href="https://testnet.sodex.com"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-primary underline-offset-2 hover:underline inline-block"
+                    >
+                      Open SoDEX Testnet to connect this wallet and claim faucet funds →
+                    </a>
+                  ) : (
+                    <p>Connect this wallet to SoDEX Mainnet and fund its trading account before retrying.</p>
+                  )
                 )}
               </div>
             )}
@@ -479,6 +571,21 @@ export function SoDEXOrderPlacement({
 
         {(stage === 'ready' || stage === 'signing' || stage === 'submitting') && prepared && walletAddress && (
           <div className="space-y-4">
+            {!preparedReviewIsCurrent && (
+              <div className="space-y-2 text-sm text-warning">
+                <p>Order settings changed. Review the updated order before signing.</p>
+                <Button
+                  type="button"
+                  className="btn-secondary w-full"
+                  onClick={() => {
+                    invalidatePreparedReview();
+                    setStage('connected');
+                  }}
+                >
+                  Review order again
+                </Button>
+              </div>
+            )}
             {preparedForAddress?.toLowerCase() !== walletAddress.toLowerCase() && (
               <div className="space-y-2 text-sm text-warning">
                 <p>The connected wallet changed. Review this order again for the selected account.</p>
@@ -507,7 +614,7 @@ export function SoDEXOrderPlacement({
               <Row label="Protection Price" value={`$${prepared.preview.protectionPrice}`} />
               <Row label="Max Slippage" value={`${(prepared.preview.slippagePct * 100).toFixed(1)}%`} />
               <Row label="Estimated Notional" value={`$${prepared.preview.estimatedNotionalUsd.toLocaleString()}`} />
-              <Row label="Network" value="SoDEX Testnet" />
+              <Row label="Network" value={`SoDEX ${prepared.preview.network}`} />
               <Row label="Risk Score / Decision" value={`${riskScore}/100 — ${decision}`} />
               <Row
                 label="Builder fee"
@@ -526,10 +633,18 @@ export function SoDEXOrderPlacement({
 
             <Button
               onClick={signAndSubmit}
-              disabled={stage !== 'ready' || preparedForAddress?.toLowerCase() !== walletAddress.toLowerCase()}
+              disabled={
+                stage !== 'ready' ||
+                preparedForAddress?.toLowerCase() !== walletAddress.toLowerCase() ||
+                !preparedReviewIsCurrent
+              }
               className="btn-primary w-full"
             >
-              {stage === 'signing' ? 'Waiting for wallet signature…' : stage === 'submitting' ? 'Submitting to SoDEX testnet…' : 'Sign & Place Order'}
+              {stage === 'signing'
+                ? 'Waiting for wallet signature…'
+                : stage === 'submitting'
+                  ? `Submitting to SoDEX ${prepared.preview.network}…`
+                  : 'Sign & Place Order'}
             </Button>
           </div>
         )}
@@ -537,15 +652,15 @@ export function SoDEXOrderPlacement({
         {(stage === 'done' || stage === 'error') && result && (
           <div className={`p-4 rounded-lg space-y-2 text-sm ${result.success ? 'bg-success/5 border border-success/30' : 'bg-danger/5 border border-danger/30'}`}>
             <div className={`font-medium ${result.success ? 'text-success' : 'text-danger'}`}>
-              {result.success ? 'Order placed on SoDEX Testnet' : 'Order failed'}
+              {result.success ? `Order placed on SoDEX ${result.network}` : 'Order failed'}
             </div>
             <Row label="Order ID" value={result.orderID ? String(result.orderID) : '—'} />
             <Row label="Client Order ID" value={result.clOrdID} />
-            <Row label="Submitted size" value={prepared?.preview.quantity ?? '—'} />
-            <Row label="Protection price" value={prepared ? `$${prepared.preview.protectionPrice}` : '—'} />
+            <Row label="Submitted size" value={result.submittedQuantity ?? '—'} />
+            <Row label="Protection price" value={result.protectionPrice ? `$${result.protectionPrice}` : '—'} />
             <Row label="Risk score at execution" value={`${riskScore}/100 — ${decision}`} />
             <Row label="Timestamp" value={new Date(result.timestamp).toLocaleString()} />
-            <Row label="Network" value="SoDEX Testnet" />
+            <Row label="Network" value={`SoDEX ${result.network}`} />
             {!result.success && result.error && <p className="text-xs text-danger">{result.error}</p>}
           </div>
         )}

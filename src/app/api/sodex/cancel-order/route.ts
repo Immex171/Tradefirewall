@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { sodexAPI, SodexSpotAccountOrder } from '@/lib/sodex';
+import { getSodexAPI, SodexSpotAccountOrder } from '@/lib/sodex';
 import { listTradableSodexSpotMarkets, SodexSpotMarketOption } from '@/lib/sodexMarkets';
 import { getSodexSpotSymbolError } from '@/lib/sodexSymbols';
 import {
@@ -7,23 +7,16 @@ import {
   buildBatchCancelOrderParams,
   buildExchangeActionTypedData,
   computeActionPayloadHash,
-  SODEX_TESTNET_CHAIN_ID,
+  getSodexChainId,
   toSodexApiSign,
 } from '@/lib/sodexOrderSigning';
+import { getSodexSpotApiUrl } from '@/lib/sodexBuilder';
+import { getConfiguredSodexNetwork } from '@/lib/sodexNetwork';
 
 const WALLET_ADDRESS = /^0x[a-fA-F0-9]{40}$/;
-const SODEX_TESTNET_SPOT_URL = (
-  process.env.SODEX_TESTNET_SPOT_URL || 'https://testnet-gw.sodex.dev/api/v1/spot'
-).replace(/\/$/, '');
-
 export async function POST(request: NextRequest) {
-  if (sodexAPI.configuredNetwork !== 'testnet') {
-    return NextResponse.json(
-      { error: 'SoDEX order cancellation is currently available on Testnet only.' },
-      { status: 403 }
-    );
-  }
-
+  const network = getConfiguredSodexNetwork(request.cookies.get('sodex-network')?.value);
+  const sodexAPI = getSodexAPI(network);
   try {
     let body: unknown;
     try {
@@ -34,8 +27,16 @@ export async function POST(request: NextRequest) {
     if (!isRecord(body)) {
       return NextResponse.json({ error: 'Invalid cancellation request body.' }, { status: 400 });
     }
-    if (body.action === 'prepare') return await prepareCancellation(body);
-    if (body.action === 'submit') return await submitCancellation(body);
+    if (body.action === 'prepare') return await prepareCancellation(body, network, sodexAPI);
+    if (body.action === 'submit') {
+      if (body.network !== network) {
+        return NextResponse.json(
+          { error: 'The selected SoDEX network changed after review. Prepare and sign the cancellation again.' },
+          { status: 409 }
+        );
+      }
+      return await submitCancellation(body, network, sodexAPI);
+    }
     return NextResponse.json({ error: 'Unknown action. Use "prepare" or "submit".' }, { status: 400 });
   } catch (error) {
     console.error('SoDEX order cancellation failed:', error);
@@ -51,7 +52,7 @@ async function prepareCancellation(body: {
   symbol?: unknown;
   orderID?: unknown;
   clOrdID?: unknown;
-}) {
+}, network: 'testnet' | 'mainnet', sodexAPI: ReturnType<typeof getSodexAPI>) {
   const { address, symbol, orderID, clOrdID } = body;
   if (
     typeof address !== 'string' ||
@@ -111,9 +112,9 @@ async function prepareCancellation(body: {
   return NextResponse.json({
     params,
     nonce,
-    typedData: buildExchangeActionTypedData(payloadHash, nonce, SODEX_TESTNET_CHAIN_ID),
+    typedData: buildExchangeActionTypedData(payloadHash, nonce, getSodexChainId(network)),
     order: { symbol, orderID: order.orderID, clOrdID: order.clOrdID },
-    network: 'testnet',
+    network,
   });
 }
 
@@ -122,7 +123,7 @@ async function submitCancellation(body: {
   params?: unknown;
   nonce?: unknown;
   signature?: unknown;
-}) {
+}, network: 'testnet' | 'mainnet', sodexAPI: ReturnType<typeof getSodexAPI>) {
   const { address, params: rawParams, nonce, signature } = body;
   if (
     typeof address !== 'string' ||
@@ -203,14 +204,14 @@ async function submitCancellation(body: {
     );
   }
 
-  const response = await fetch(`${SODEX_TESTNET_SPOT_URL}/trade/orders/batch`, {
+  const response = await fetch(`${getSodexSpotApiUrl(network)}/trade/orders/batch`, {
     method: 'DELETE',
     headers: {
       'Content-Type': 'application/json',
       Accept: 'application/json',
       'X-API-Sign': apiSign,
       'X-API-Nonce': String(nonce),
-      'X-API-Chain': String(SODEX_TESTNET_CHAIN_ID),
+      'X-API-Chain': String(getSodexChainId(network)),
     },
     body: JSON.stringify(params),
   });
@@ -232,7 +233,7 @@ async function submitCancellation(body: {
       orderID: result?.orderID ?? cancel.orderID,
       clOrdID: result?.clOrdID ?? cancel.clOrdID,
       error: success ? undefined : result?.error || container.message || 'SoDEX rejected the cancellation.',
-      network: 'testnet',
+      network,
       timestamp: Date.now(),
     },
     { status: success ? 200 : 502 }

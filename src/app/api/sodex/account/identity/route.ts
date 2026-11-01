@@ -1,16 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { sodexAPI } from '@/lib/sodex';
+import { getSodexAPI } from '@/lib/sodex';
 import { getConfiguredBuilderID } from '@/lib/sodexBuilder';
+import { getConfiguredSodexNetwork } from '@/lib/sodexNetwork';
 
 const WALLET_ADDRESS = /^0x[a-fA-F0-9]{40}$/;
 
 export async function GET(request: NextRequest) {
-  if (sodexAPI.configuredNetwork !== 'testnet') {
-    return NextResponse.json(
-      { error: 'SoDEX account identity is currently available on Testnet only.' },
-      { status: 403 }
-    );
-  }
+  const network = getConfiguredSodexNetwork(request.cookies.get('sodex-network')?.value);
+  const sodexAPI = getSodexAPI(network);
 
   const address = request.nextUrl.searchParams.get('address');
   if (address && !WALLET_ADDRESS.test(address)) {
@@ -20,9 +17,9 @@ export async function GET(request: NextRequest) {
   try {
     const account = address ? await sodexAPI.getAccountState(address) : null;
     return NextResponse.json({
-      network: 'testnet',
+      network,
       accountID: account?.accountID ?? null,
-      builderID: getConfiguredBuilderID(),
+      builderID: getConfiguredBuilderID(network),
     });
   } catch (error) {
     console.error('SoDEX account identity lookup failed:', error);

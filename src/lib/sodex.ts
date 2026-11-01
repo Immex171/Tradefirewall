@@ -581,9 +581,10 @@ class SoDEXAPI {
     try {
       raw = (await this.fetchSpot(`/accounts/${address}/state`)) as typeof raw;
     } catch (err) {
-      // SoDEX returns code -1 "invalid parameter: userAddress" for addresses it has
-      // never seen at all (never onboarded), which unwrap() turns into a thrown Error.
-      throw new Error(NOT_ONBOARDED_MESSAGE, { cause: err });
+      if (err instanceof Error && /invalid parameter: userAddress/i.test(err.message)) {
+        throw new Error(NOT_ONBOARDED_MESSAGE, { cause: err });
+      }
+      throw err;
     }
     const accountID = Number(raw?.aid);
     if (!Number.isFinite(accountID) || accountID <= 0) {

@@ -14,6 +14,7 @@ import { ConfirmationGate } from '@/components/ConfirmationGate';
 import { SoDEXOrderPlacement } from '@/components/SoDEXOrderPlacement';
 import { SoDEXAccountManagement } from '@/components/SoDEXAccountManagement';
 import { SoDEXBuilderIdCard } from '@/components/SoDEXBuilderIdCard';
+import { SoDEXNetworkSwitcher } from '@/components/SoDEXNetworkSwitcher';
 import { TradeInput, RiskAnalysis, saferPositionAmount } from '@/lib/riskEngine';
 import { RiskExplanation } from '@/lib/riskExplanation';
 import { storageManager, WatchlistItem, SavedReport } from '@/lib/storage';
@@ -591,6 +592,7 @@ export default function CheckTradePage() {
           </div>
 
           <div className="col-span-12">
+            <SoDEXNetworkSwitcher />
             <SoDEXBuilderIdCard />
           </div>
 

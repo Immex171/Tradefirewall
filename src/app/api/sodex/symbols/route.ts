@@ -1,12 +1,15 @@
-import { NextResponse } from 'next/server';
-import { sodexAPI } from '@/lib/sodex';
+import { NextRequest, NextResponse } from 'next/server';
+import { getSodexAPI } from '@/lib/sodex';
 import { sosoValueAPI } from '@/lib/sosovalue';
+import { getConfiguredSodexNetwork } from '@/lib/sodexNetwork';
 import {
   filterSodexMarketsBySupportedSymbols,
   listTradableSodexSpotMarkets,
 } from '@/lib/sodexMarkets';
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const network = getConfiguredSodexNetwork(request.cookies.get('sodex-network')?.value);
+  const sodexAPI = getSodexAPI(network);
   try {
     const [rows, supportedSymbols] = await Promise.all([
       sodexAPI.getSpotSymbols(),
@@ -17,7 +20,7 @@ export async function GET() {
       supportedSymbols
     );
     return NextResponse.json({
-      network: sodexAPI.configuredNetwork,
+      network,
       markets,
       symbols: markets.map(({ symbol, name }) => ({ symbol, name })),
     });

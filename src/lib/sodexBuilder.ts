@@ -1,10 +1,14 @@
 import { recoverTypedDataAddress } from 'viem';
-import { SODEX_TESTNET_CHAIN_ID } from '@/lib/sodexOrderSigning';
+import { getConfiguredSodexNetwork, getSodexChainId, type SodexNetwork } from '@/lib/sodexNetwork';
+export { getConfiguredSodexNetwork } from '@/lib/sodexNetwork';
 
 export const SODEX_SPOT_BUILDER_FEE_LIMIT = 2000;
 const UINT64_MAX = BigInt(2) ** BigInt(64) - BigInt(1);
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000' as const;
-const TESTNET_API_ROOT = 'https://testnet-gw.sodex.dev/api/v1';
+const API_ROOTS: Record<SodexNetwork, string> = {
+  testnet: 'https://testnet-gw.sodex.dev/api/v1',
+  mainnet: 'https://mainnet-gw.sodex.dev/api/v1',
+};
 const BUILDER_APPROVAL_TYPES = {
   EIP712Domain: [
     { name: 'name', type: 'string' },
@@ -32,6 +36,18 @@ export interface BuilderApprovals {
   perps: BuilderApproval[];
 }
 
+export function verifyBuilderApprovalState(
+  approvals: BuilderApprovals,
+  builderID: string,
+  maxFeeRate: number
+): boolean {
+  const spotApproval = approvals.spot.find((item) => item.builderID === builderID);
+  const perpsApproval = approvals.perps.find((item) => item.builderID === builderID);
+  return maxFeeRate === 0
+    ? spotApproval === undefined && perpsApproval === undefined
+    : spotApproval?.feeRate === maxFeeRate && perpsApproval?.feeRate === maxFeeRate;
+}
+
 export interface BuilderStats {
   summary: BuilderFeeStats | null;
   dailyChart: BuilderFeeDailyStats[];
@@ -56,8 +72,9 @@ export interface BuilderFeeDailyStats {
 }
 
 export class SodexBuilderStatsUnavailableError extends Error {
-  constructor() {
-    super('SoDEX currently returns 404 for its Testnet Builder statistics endpoints. The documented statistics API is not available on Testnet yet.');
+  constructor(network: SodexNetwork = 'testnet') {
+    const networkName = network === 'testnet' ? 'Testnet' : 'Mainnet';
+    super(`SoDEX currently returns 404 for its ${networkName} Builder statistics endpoints. The documented statistics API is not available on ${networkName} yet.`);
     this.name = 'SodexBuilderStatsUnavailableError';
   }
 }
@@ -121,17 +138,27 @@ export function normalizeBuilderID(value: unknown): string {
   return id;
 }
 
-export function getConfiguredBuilderID(): string | null {
-  const configuredID = process.env.SODEX_BUILDER_ID?.trim();
+export function getConfiguredBuilderID(
+  network: SodexNetwork = getConfiguredSodexNetwork()
+): string | null {
+  const configuredID = process.env[
+    network === 'testnet' ? 'SODEX_BUILDER_ID' : 'SODEX_MAINNET_BUILDER_ID'
+  ]?.trim();
   if (!configuredID) return null;
   return normalizeBuilderID(configuredID);
 }
 
-export function getConfiguredBuilderAddress(): string | null {
-  const address = process.env.SODEX_BUILDER_ADDRESS?.trim();
+export function getConfiguredBuilderAddress(
+  network: SodexNetwork = getConfiguredSodexNetwork()
+): string | null {
+  const address = process.env[
+    network === 'testnet' ? 'SODEX_BUILDER_ADDRESS' : 'SODEX_MAINNET_BUILDER_ADDRESS'
+  ]?.trim();
   if (!address) return null;
   if (!/^0x[a-fA-F0-9]{40}$/.test(address)) {
-    throw new Error('SODEX_BUILDER_ADDRESS must be a valid EVM wallet address.');
+    throw new Error(
+      `${network === 'testnet' ? 'SODEX_BUILDER_ADDRESS' : 'SODEX_MAINNET_BUILDER_ADDRESS'} must be a valid EVM wallet address.`
+    );
   }
   return address;
 }
@@ -153,6 +180,7 @@ export function buildBuilderApprovalTypedData(input: {
   builderID: string;
   maxFeeRate: number;
   nonce: number;
+  network?: SodexNetwork;
 }): BuilderApprovalTypedData {
   if (!Number.isSafeInteger(input.accountID) || input.accountID <= 0) {
     throw new Error('SoDEX account ID must be a positive safe integer.');
@@ -163,17 +191,18 @@ export function buildBuilderApprovalTypedData(input: {
 
   const builderID = normalizeBuilderID(input.builderID);
   const maxFeeRate = validateBuilderFeeRate(input.maxFeeRate);
+  const network = input.network ?? 'testnet';
   return {
     domain: {
       name: 'universal',
       version: '1',
-      chainId: SODEX_TESTNET_CHAIN_ID,
+      chainId: getSodexChainId(network),
       verifyingContract: ZERO_ADDRESS,
     },
     types: BUILDER_APPROVAL_TYPES,
     primaryType: 'ApproveBuilderFeeAction',
     message: {
-      chainID: SODEX_TESTNET_CHAIN_ID,
+      chainID: getSodexChainId(network),
       nonce: input.nonce,
       accountID: input.accountID,
       builderID,
@@ -215,21 +244,36 @@ export function recoverBuilderApprovalSigner(
   });
 }
 
-export function getSodexTestnetApiRoot(): string {
-  const configured = process.env.SODEX_TESTNET_SPOT_URL || `${TESTNET_API_ROOT}/spot`;
+export function getSodexApiRoot(network: SodexNetwork = getConfiguredSodexNetwork()): string {
+  const configured = process.env[
+    network === 'testnet' ? 'SODEX_TESTNET_SPOT_URL' : 'SODEX_MAINNET_SPOT_URL'
+  ] || `${API_ROOTS[network]}/spot`;
   const url = new URL(configured);
   if (
     url.protocol !== 'https:' ||
-    url.hostname !== 'testnet-gw.sodex.dev' ||
+    url.hostname !== new URL(API_ROOTS[network]).hostname ||
     !url.pathname.endsWith('/api/v1/spot')
   ) {
-    throw new Error('SODEX_TESTNET_SPOT_URL must be an HTTPS SoDEX testnet Spot API URL ending in /api/v1/spot.');
+    throw new Error(
+      `${network === 'testnet' ? 'SODEX_TESTNET_SPOT_URL' : 'SODEX_MAINNET_SPOT_URL'} must be an HTTPS SoDEX ${network} Spot API URL ending in /api/v1/spot.`
+    );
   }
   return `${url.origin}${url.pathname.slice(0, -'/spot'.length)}`;
 }
 
-export async function fetchBuilderApprovals(userAddress: string): Promise<BuilderApprovals> {
-  const root = getSodexTestnetApiRoot();
+export function getSodexTestnetApiRoot(): string {
+  return getSodexApiRoot('testnet');
+}
+
+export function getSodexSpotApiUrl(network: SodexNetwork = getConfiguredSodexNetwork()): string {
+  return `${getSodexApiRoot(network)}/spot`;
+}
+
+export async function fetchBuilderApprovals(
+  userAddress: string,
+  network: SodexNetwork = getConfiguredSodexNetwork()
+): Promise<BuilderApprovals> {
+  const root = getSodexApiRoot(network);
   const response = await fetch(
     `${root}/user/${encodeURIComponent(userAddress)}/builders`,
     { headers: { Accept: 'application/json' }, cache: 'no-store', signal: AbortSignal.timeout(8000) }
@@ -249,7 +293,6 @@ export async function fetchBuilderApprovals(userAddress: string): Promise<Builde
   }
   const data = envelope.data as { spot?: unknown; perps?: unknown };
   const parseRows = (rows: unknown): BuilderApproval[] => {
-    if (rows === undefined || rows === null) return [];
     if (!Array.isArray(rows)) throw new Error('SoDEX returned an invalid builder approval list.');
     return rows.map((row: unknown) => {
       if (!row || typeof row !== 'object') throw new Error('SoDEX returned an invalid builder approval.');
@@ -274,12 +317,13 @@ export async function fetchBuilderApprovals(userAddress: string): Promise<Builde
 export async function fetchBuilderStats(
   userAddress: string,
   builderID: string,
-  limit = 90
+  limit = 90,
+  network: SodexNetwork = getConfiguredSodexNetwork()
 ): Promise<BuilderStats> {
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 300) {
     throw new Error('Builder daily chart limit must be an integer from 1 to 300.');
   }
-  const root = getSodexTestnetApiRoot();
+  const root = getSodexApiRoot(network);
   const path = `/user/${encodeURIComponent(userAddress)}/builder`;
   const query = `accountID=${encodeURIComponent(normalizeBuilderID(builderID))}`;
   const request = async (endpoint: string): Promise<unknown> => {
@@ -288,7 +332,7 @@ export async function fetchBuilderStats(
       cache: 'no-store',
       signal: AbortSignal.timeout(8000),
     });
-    if (response.status === 404) throw new SodexBuilderStatsUnavailableError();
+    if (response.status === 404) throw new SodexBuilderStatsUnavailableError(network);
     if (!response.ok) throw new Error(`SoDEX Builder statistics unavailable (HTTP ${response.status}).`);
     const body = await response.text();
     let payload: unknown;

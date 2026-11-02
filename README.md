@@ -633,11 +633,11 @@ flowchart TD
 
 ### Builder Codes status
 
-Ordinary signed Spot trades can be submitted to SoDEX Testnet through the existing wallet flow; Builder Codes are optional and are not required to execute those trades. Mainnet execution remains disabled. Users can approve or revoke Builder Codes using their connected master wallet, inspect approval state, and explicitly opt in to an eligible Spot sell fee. Set the server-only `SODEX_BUILDER_ID` to TradeFirewall's dedicated SoDEX Testnet builder account ID. It is distinct from the connected user's account ID.
+Ordinary signed Spot trades can be submitted to the configured SoDEX network through the existing wallet flow; Builder Codes are optional and are not required to execute trades. Testnet is the default. Mainnet is enabled only with `SODEX_USE_TESTNET=false` and separate Mainnet configuration. Users can approve or revoke Builder Codes using their connected master wallet, inspect approval state, and explicitly opt in to an eligible Spot sell fee. The server-only builder ID is distinct from the connected user's account ID.
 
-Builder fee approval, optional Spot sell order inclusion, and both-engine status verification are implemented. Set `SODEX_BUILDER_ADDRESS` to the public owner address of the configured builder account to load SoDEX-reported Testnet summary and daily statistics. Recent Spot fills show SoDEX's actual builder fee separately from its total fee; the builder fee is included in the total and must not be double-counted. Perps order support is not implemented. Do not send a master-wallet private key to the server or assume an approval guarantees a fee on every fill.
+Builder fee approval, optional Spot sell order inclusion, and both-engine status verification are implemented. Configure the Testnet `SODEX_BUILDER_ID`/`SODEX_BUILDER_ADDRESS` and the separate Mainnet `SODEX_MAINNET_BUILDER_ID`/`SODEX_MAINNET_BUILDER_ADDRESS`. Recent Spot fills show SoDEX's actual builder fee separately from its total fee; the builder fee is included in the total and must not be double-counted. Perps order support is not implemented. Do not send a master-wallet private key to the server or assume an approval guarantees a fee on every fill.
 
-The specification's fee values are integers in tenths of a basis point: Spot is capped at 2000 (2%) and Perps at 200 (0.2%). Approval ceilings and actual fill fees are distinct; only confirmed fill records can establish actual builder fees. No live Builder Codes approval, order, or fill flow has been verified.
+The specification's fee values are integers in tenths of a basis point: Spot is capped at 2000 (2%) and Perps at 200 (0.2%). Approval ceilings and actual fill fees are distinct; only confirmed fill records can establish actual builder fees. A complete live Testnet Builder approval/order/fill/revocation flow has not yet been verified.
 
 ---
 
@@ -1041,13 +1041,22 @@ SOSOVALUE_API_KEY=
 SODEX_USE_TESTNET=true
 SODEX_TESTNET_SPOT_URL=https://testnet-gw.sodex.dev/api/v1/spot
 SODEX_TESTNET_PERPS_URL=https://testnet-gw.sodex.dev/api/v1/perps
+# Testnet builder identity (server-only ID; public owner address):
+SODEX_BUILDER_ID=
+SODEX_BUILDER_ADDRESS=
+# Separate Mainnet configuration — never copy Testnet identifiers here:
+SODEX_MAINNET_BUILDER_ID=
+SODEX_MAINNET_BUILDER_ADDRESS=
+# Set SODEX_USE_TESTNET=false only to enable live Mainnet reads and signed actions.
+# Configure the official HTTPS RPC before adding Mainnet to an injected wallet.
 # SODEX_MAINNET_SPOT_URL=https://mainnet-gw.sodex.dev/api/v1/spot
 # SODEX_MAINNET_PERPS_URL=https://mainnet-gw.sodex.dev/api/v1/perps
+# NEXT_PUBLIC_SODEX_MAINNET_RPC_URL=
 ```
 
 The connected wallet must have an activated SoDEX Testnet account. TradeFirewall's configured numeric builder account ID is displayed on Check Trade; it is separate from the user's account ID. Builder approvals are signed by the user's wallet; no private key is requested or sent to the server. SoDEX checks builder eligibility (100 vUSDC in both Spot and Perps) when a non-zero approval is submitted. The app verifies the returned Spot and Perps approval lists before it reports success or includes a builder in an order.
 
-Builder fees default to 90 units (`0.09%`), are only eligible for SoDEX Spot sells in this execution flow, and require both an account-level user approval and explicit per-order opt-in. Fee rates are integer tenths of a basis point (`50` = `0.05%`); the Spot cap is `2000` (2%). Revocation signs `maxFeeRate: 0`. Builder orders remain subject to the existing trade risk gate and are testnet-only. See [SoDEX Builder Codes](./docs/SoDEX_Builder_Codes.md) for fee units, signing, and SoDEX API behavior.
+Builder fees default to 90 units (`0.09%`), are only eligible for SoDEX Spot sells in this execution flow, and require both an account-level user approval and explicit per-order opt-in. Fee rates are integer tenths of a basis point (`50` = `0.05%`); the Spot cap is `2000` (2%). Revocation signs `maxFeeRate: 0`. Builder orders remain subject to the existing trade risk gate. Testnet is the default; Mainnet requires `SODEX_USE_TESTNET=false`, separate Mainnet builder values, and an HTTPS wallet RPC configuration. See [SoDEX Builder Codes](./docs/SoDEX_Builder_Codes.md) for fee units, signing, and SoDEX API behavior.
 
 ---
 
@@ -1386,16 +1395,16 @@ Wave 3 responds directly to judge feedback: make the product read as a statistic
 
 `src/lib/riskCalibration.ts` adds a calibration table for each of the four score bands already used across the UI (0-25 / 26-50 / 51-75 / 76-100): why the threshold exists, what kinds of real backtested cases typically land there, the expected failure mode, and confidence guidance. `RiskAnalysis` (in `riskEngine.ts`) now additively carries `calibration` and `reliability` fields on every live analysis — `reliability` is a plain-language "High/Medium/Low confidence: …" note derived from the exact same signals the engine's existing confidence score already inspects (orderbook depth, news count, ticker volume, execution warnings), not new invented signals. Every risk report shows a **Score Calibration** panel (score, band, confidence, what this score historically means, known limitations) alongside the existing factor breakdown.
 
-### 3. Testnet Execution Gate
+### 3. Network-Scoped Execution Gate
 
-The flow is now: trade idea → risk analysis → execution preview → confirmation gate → connect wallet / sign → SoDEX testnet order → order result.
+The default flow is: trade idea → risk analysis → execution preview → confirmation gate → connect wallet / sign → SoDEX Testnet order → order result. Mainnet is separately configurable and is never selected by default.
 
 - **APPROVE / CAUTION** results render `SoDEXOrderPlacement`, which connects an injected browser wallet (no wallet UI appears before a risk result exists), shows a live execution preview, an order ticket (symbol, side, quantity, order type, protection price, network, risk score) for review, then asks the wallet to sign — nothing is submitted until the user explicitly signs.
 - **REDUCE_OR_WAIT / BLOCK** results keep the existing `ConfirmationGate`, now decision-aware: BLOCK has no execution override at all, not even behind checkboxes; REDUCE_OR_WAIT's only forward path is reducing size and re-running analysis.
-- Signing uses standard EIP-712 (`eth_signTypedData_v4` — any injected wallet supports this natively, no client-side crypto library needed). The exact signing scheme — domain, `ExchangeAction(bytes32 payloadHash, uint64 nonce)` type, `payloadHash = keccak256(compact_json({type, params}))`, header format — is ported directly from SoDEX's public Go SDK (`github.com/sodex-tech/sodex-go-sdk-public`) in `src/lib/sodexOrderSigning.ts`, which lives server-side only; the private key never leaves the browser, and the server never sees anything but a signature.
-- `src/app/api/sodex/place-order/route.ts` resolves `accountID`/`symbolID` from public SoDEX reads, builds a slippage-protected marketable-limit order (LIMIT + IOC, price = current ask/bid ± a configurable protection margin), and re-checks the BLOCK/REDUCE_OR_WAIT gating server-side as a backstop against a tampered client. It is hardcoded to SoDEX's testnet endpoint and explicitly refuses to run at all if `SODEX_USE_TESTNET` isn't `true` — mainnet is not reachable from this route under any input.
+- Signing uses standard EIP-712 (`eth_signTypedData_v4` — any injected wallet supports this natively, no client-side crypto library needed). The exact signing scheme — domain, network-specific chain ID, `ExchangeAction(bytes32 payloadHash, uint64 nonce)` type, `payloadHash = keccak256(compact_json({type, params}))`, header format — is ported directly from SoDEX's public Go SDK (`github.com/sodex-tech/sodex-go-sdk-public`) in `src/lib/sodexOrderSigning.ts`; the private key never leaves the browser, and the server never sees anything but a signature.
+- `src/app/api/sodex/place-order/route.ts` resolves `accountID`/`symbolID` from the configured SoDEX network, builds a slippage-protected marketable-limit order (LIMIT + IOC, price = current ask/bid ± a configurable protection margin), and re-checks the BLOCK/REDUCE_OR_WAIT gating server-side as a backstop against a tampered client. Testnet remains the default. Mainnet order submission is available only when `SODEX_USE_TESTNET=false`, with the wallet on the matching chain and distinct Mainnet Builder settings.
 
-**Known limitation:** this environment has no funded SoDEX testnet wallet, so the `prepare` phase (account/symbol resolution, order sizing, payload-hash construction, typed-data generation) has been verified live against SoDEX testnet, but the full sign → submit → fill round trip has not been exercised end-to-end with a real wallet. Errors from SoDEX are surfaced verbatim rather than swallowed either way.
+Mainnet uses separate builder ID/address environment variables and a separately configured public RPC URL. The app does not infer a Mainnet builder identity from Testnet settings. Do not select Mainnet without reviewing the live-order warning and verifying all network-specific configuration.
 
 ### 4. Known Limitations (Wave 3, summarized)
 

@@ -2,6 +2,7 @@
 // Responses use `code` + `data`; tickers/orderbooks use exchange-native field names.
 import { getSodexSpotSymbolError } from './sodexSymbols';
 import { findSodexMarketSymbol } from './sodexMarkets';
+import { getConfiguredSodexNetwork, type SodexNetwork } from './sodexNetwork';
 
 export interface SodexSymbol {
   symbol: string;
@@ -259,7 +260,7 @@ export interface SodexMarketMicrostructure {
 
 class SoDEXAPI {
   private readonly spotBaseUrl: string;
-  private readonly network: 'testnet' | 'mainnet';
+  private readonly network: SodexNetwork;
   private symbolsCache: {
     at: number;
     rows: Record<string, unknown>[];
@@ -271,11 +272,10 @@ class SoDEXAPI {
     return this.network;
   }
 
-  constructor() {
-    const useTestnet = (process.env.SODEX_USE_TESTNET ?? 'true').toLowerCase() !== 'false';
-    this.network = useTestnet ? 'testnet' : 'mainnet';
+  constructor(network = getConfiguredSodexNetwork()) {
+    this.network = network;
     this.spotBaseUrl = (
-      useTestnet
+      network === 'testnet'
         ? process.env.SODEX_TESTNET_SPOT_URL || 'https://testnet-gw.sodex.dev/api/v1/spot'
         : process.env.SODEX_MAINNET_SPOT_URL || 'https://mainnet-gw.sodex.dev/api/v1/spot'
     ).replace(/\/$/, '');
@@ -298,7 +298,7 @@ class SoDEXAPI {
   }
 
   /** Read-only mainnet base URL, independent of SODEX_USE_TESTNET — used only for historical
-   * backtest data (real prices), never for order placement (execution stays testnet-only). */
+   * backtest data (real prices), separate from the configured execution network. */
   static readonly MAINNET_SPOT_URL = (
     process.env.SODEX_MAINNET_SPOT_URL || 'https://mainnet-gw.sodex.dev/api/v1/spot'
   ).replace(/\/$/, '');
@@ -575,15 +575,16 @@ class SoDEXAPI {
    */
   async getAccountState(address: string): Promise<SodexAccountState> {
     const NOT_ONBOARDED_MESSAGE =
-      'This wallet has no SoDEX testnet account yet. Visit https://testnet.sodex.com, connect this wallet, and claim testnet funds from the faucet, then try again.';
+      `This wallet has no SoDEX ${this.network} account yet.${this.network === 'testnet' ? ' Visit https://testnet.sodex.com, connect this wallet, and claim testnet funds from the faucet, then try again.' : ''}`;
 
     let raw: { user?: string; aid?: number; uid?: number; B?: Array<{ i: number; a: string; t: string; l: string }> };
     try {
       raw = (await this.fetchSpot(`/accounts/${address}/state`)) as typeof raw;
     } catch (err) {
-      // SoDEX returns code -1 "invalid parameter: userAddress" for addresses it has
-      // never seen at all (never onboarded), which unwrap() turns into a thrown Error.
-      throw new Error(NOT_ONBOARDED_MESSAGE, { cause: err });
+      if (err instanceof Error && /invalid parameter: userAddress/i.test(err.message)) {
+        throw new Error(NOT_ONBOARDED_MESSAGE, { cause: err });
+      }
+      throw err;
     }
     const accountID = Number(raw?.aid);
     if (!Number.isFinite(accountID) || accountID <= 0) {
@@ -927,4 +928,13 @@ class SoDEXAPI {
   }
 }
 
-export const sodexAPI = new SoDEXAPI();
+const sodexAPIs: Record<SodexNetwork, SoDEXAPI> = {
+  testnet: new SoDEXAPI('testnet'),
+  mainnet: new SoDEXAPI('mainnet'),
+};
+
+export function getSodexAPI(network: SodexNetwork = getConfiguredSodexNetwork()) {
+  return sodexAPIs[network];
+}
+
+export const sodexAPI = getSodexAPI();

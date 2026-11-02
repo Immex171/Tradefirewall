@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { buildTickerFromKlines, type SodexKline } from './sodex';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { buildTickerFromKlines, sodexAPI, type SodexKline } from './sodex';
 
 const kline = (values: Partial<SodexKline> & Pick<SodexKline, 'openTime' | 'open' | 'close'>): SodexKline => ({
   openTime: values.openTime,
@@ -51,6 +51,45 @@ describe('buildTickerFromKlines', () => {
       volume: '5',
       quoteVolume: '55',
       count: 7,
+    });
+  });
+
+  describe('SoDEX account state lookup', () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it('explains onboarding only when SoDEX identifies an unknown wallet', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ code: -1, message: 'invalid parameter: userAddress' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      ));
+
+      await expect(sodexAPI.getAccountState('0x0000000000000000000000000000000000000001'))
+        .rejects.toThrow('This wallet has no SoDEX testnet account yet.');
+    });
+
+    it('preserves upstream failures instead of reporting a missing account', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+        new Response('Bad Gateway', { status: 502, statusText: 'Bad Gateway' })
+      ));
+
+      await expect(sodexAPI.getAccountState('0x0000000000000000000000000000000000000001'))
+        .rejects.toThrow('SoDEX HTTP 502: Bad Gateway');
+    });
+
+    it('still identifies a wallet with an uninitialized account ID as not onboarded', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ code: 0, data: { aid: 0 } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      ));
+
+      await expect(sodexAPI.getAccountState('0x0000000000000000000000000000000000000001'))
+        .rejects.toThrow('This wallet has no SoDEX testnet account yet.');
     });
   });
 

@@ -6,7 +6,8 @@ import {
   SoSoValueTimeoutError,
   SoSoMarketIntelligence,
 } from './sosovalue';
-import { sodexAPI, SodexMarketMicrostructure, SodexExecutionPreview, SodexTicker, SodexOrderbook } from './sodex';
+import { getSodexAPI, SodexMarketMicrostructure, SodexExecutionPreview, SodexTicker, SodexOrderbook } from './sodex';
+import { getConfiguredSodexNetwork, type SodexNetwork } from './sodexNetwork';
 import { getCalibrationBand, getReliabilityNote, CalibrationBandId, ReliabilityNote } from './riskCalibration';
 import { resolveRiskProfile, toProfileConfig, RiskProfileConfig, RiskProfileInput } from './riskProfiles';
 
@@ -438,7 +439,11 @@ function buildNullSodexData(): SodexAnalysisData {
 }
 
 class RiskEngine {
-  async analyzeTradeRisk(input: TradeInput): Promise<RiskAnalysis> {
+  async analyzeTradeRisk(
+    input: TradeInput,
+    network: SodexNetwork = getConfiguredSodexNetwork()
+  ): Promise<RiskAnalysis> {
+    const sodexAPI = getSodexAPI(network);
     // Fetch SoSoValue (required) and SoDEX (optional — degrade gracefully if unreachable)
     const finishedAt = Date.now();
 

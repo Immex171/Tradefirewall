@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { sodexAPI } from '@/lib/sodex';
+import { getSodexAPI } from '@/lib/sodex';
 import { getSodexSpotSymbolError } from '@/lib/sodexSymbols';
-import { fetchBuilderApprovals, getConfiguredBuilderID, validateBuilderFeeRate } from '@/lib/sodexBuilder';
+import {
+  fetchBuilderApprovals,
+  getConfiguredBuilderID,
+  getSodexSpotApiUrl,
+  validateBuilderFeeRate,
+} from '@/lib/sodexBuilder';
 import {
   OrderSide,
   OrderType,
@@ -14,28 +19,26 @@ import {
   toSodexApiSign,
   snapToStep,
   serializeBatchNewOrderParams,
-  SODEX_TESTNET_CHAIN_ID,
-  BatchNewOrderParams,
+  getSodexChainId,
+  type SodexNetwork,
+  type BatchNewOrderParams,
 } from '@/lib/sodexOrderSigning';
-
-// Testnet-only, always — this route never reaches mainnet regardless of trade
-// content or SODEX_USE_TESTNET misconfiguration (checked explicitly below).
-const SODEX_TESTNET_SPOT_URL = (
-  process.env.SODEX_TESTNET_SPOT_URL || 'https://testnet-gw.sodex.dev/api/v1/spot'
-).replace(/\/$/, '');
+import { getConfiguredSodexNetwork } from '@/lib/sodexNetwork';
 
 export async function POST(request: NextRequest) {
   try {
-    if (sodexAPI.configuredNetwork !== 'testnet') {
-      return NextResponse.json(
-        { error: 'SoDEX order placement requires SODEX_USE_TESTNET=true. Mainnet execution is not enabled by this app.', errorType: 'MAINNET_DISABLED' },
-        { status: 403 }
-      );
-    }
-
+    const network = getConfiguredSodexNetwork(request.cookies.get('sodex-network')?.value);
     const body = await request.json();
-    if (body.action === 'prepare') return handlePrepare(body);
-    if (body.action === 'submit') return handleSubmit(body);
+    if (body.action === 'prepare') return handlePrepare(body, network, getSodexAPI(network));
+    if (body.action === 'submit') {
+      if (body.network !== network) {
+        return NextResponse.json(
+          { error: 'The selected SoDEX network changed after review. Review and sign the order again.' },
+          { status: 409 }
+        );
+      }
+      return handleSubmit(body, network);
+    }
     return NextResponse.json({ error: 'Unknown action. Use "prepare" or "submit".' }, { status: 400 });
   } catch (error) {
     console.error('SoDEX place-order error:', error);
@@ -56,7 +59,7 @@ async function handlePrepare(body: {
   exitQuantity?: number;
   includeBuilderFee?: boolean;
   builderFee?: number;
-}) {
+}, network: SodexNetwork, sodexAPI: ReturnType<typeof getSodexAPI>) {
   const { symbol, side, amountUsd, walletAddress, decision } = body;
 
   if (
@@ -97,7 +100,7 @@ async function handlePrepare(body: {
     ]);
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to resolve account or symbol';
-    const notOnboarded = message.includes('no SoDEX testnet account');
+    const notOnboarded = message.toLowerCase().includes(`no sodex ${network} account`);
     return NextResponse.json(
       { error: message, errorType: notOnboarded ? 'NOT_ONBOARDED' : 'ACCOUNT_RESOLUTION_ERROR' },
       { status: notOnboarded ? 404 : 502 }
@@ -105,15 +108,14 @@ async function handlePrepare(body: {
   }
 
   // Uses the same bookTicker → orderbook → last-trade fallback chain as the
-  // execution preview, so a one-sided testnet book (bids with no asks, or vice
-  // versa — common on SoDEX testnet) still resolves to a usable reference price
+  // execution preview, so a one-sided book still resolves to a usable reference price
   // instead of failing outright.
   let bid: number;
   let ask: number;
   try {
     ({ bidPrice: bid, askPrice: ask } = await sodexAPI.getExecutionReferencePrices(symbol));
   } catch {
-    return NextResponse.json({ error: 'SoDEX testnet has no usable bid/ask for this symbol right now.', errorType: 'NO_LIQUIDITY' }, { status: 503 });
+    return NextResponse.json({ error: `SoDEX ${network} has no usable bid/ask for this symbol right now.`, errorType: 'NO_LIQUIDITY' }, { status: 503 });
   }
 
   const slippage = Math.min(Math.max(body.maxSlippagePct ?? 0.01, 0.001), 0.05);
@@ -188,12 +190,16 @@ async function handlePrepare(body: {
   if (includeBuilderFee) {
     if (!isBuy) {
       try {
-        builderID = getConfiguredBuilderID();
-        if (!builderID) throw new Error('TradeFirewall Builder Codes are not configured.');
+        builderID = getConfiguredBuilderID(network);
+        if (!builderID) {
+          throw new Error(
+            `TradeFirewall Builder Codes are not configured for ${network}.`
+          );
+        }
         requestedBuilderFee = validateBuilderFeeRate(body.builderFee);
         if (requestedBuilderFee <= 0) throw new Error('Choose a non-zero builder fee rate.');
 
-        const approvals = await fetchBuilderApprovals(walletAddress);
+        const approvals = await fetchBuilderApprovals(walletAddress, network);
         const spotApproval = approvals.spot.find((approval) => approval.builderID === builderID);
         if (!spotApproval || spotApproval.feeRate <= 0) {
           throw new Error('The connected wallet has no active SoDEX Spot approval for this builder.');
@@ -240,7 +246,7 @@ async function handlePrepare(body: {
   });
   const payloadHash = computePayloadHash(orderParams);
   const nonce = generateNonce();
-  const typedData = buildExchangeActionTypedData(payloadHash, nonce, SODEX_TESTNET_CHAIN_ID);
+  const typedData = buildExchangeActionTypedData(payloadHash, nonce, getSodexChainId(network));
 
   return NextResponse.json({
     typedData,
@@ -259,7 +265,7 @@ async function handlePrepare(body: {
       slippagePct: slippage,
       orderType: 'LIMIT',
       timeInForce: 'IOC',
-      network: 'testnet',
+      network,
       builder: builderPreview,
     },
   });
@@ -270,7 +276,8 @@ async function handleSubmit(body: {
   nonce?: number;
   signature?: string;
   walletAddress?: string;
-}) {
+  network?: SodexNetwork;
+}, network: SodexNetwork) {
   const { orderParams, nonce, signature, walletAddress } = body;
   if (!orderParams || !nonce || !signature || !walletAddress) {
     return NextResponse.json({ error: 'Missing signed order fields' }, { status: 400 });
@@ -283,7 +290,7 @@ async function handleSubmit(body: {
     return NextResponse.json({ error: e instanceof Error ? e.message : 'Invalid wallet signature', errorType: 'BAD_SIGNATURE' }, { status: 400 });
   }
 
-  const url = `${SODEX_TESTNET_SPOT_URL}/trade/orders/batch`;
+  const url = `${getSodexSpotApiUrl(network)}/trade/orders/batch`;
   const response = await fetch(url, {
     method: 'POST',
     headers: {
@@ -291,7 +298,7 @@ async function handleSubmit(body: {
       Accept: 'application/json',
       'X-API-Sign': apiSign,
       'X-API-Nonce': String(nonce),
-      'X-API-Chain': String(SODEX_TESTNET_CHAIN_ID),
+      'X-API-Chain': String(getSodexChainId(network)),
     },
     body: serializeBatchNewOrderParams(orderParams),
   });
@@ -315,7 +322,7 @@ async function handleSubmit(body: {
       orderID: result?.orderID ?? null,
       clOrdID: result?.clOrdID ?? orderParams.orders[0]?.clOrdID,
       error: success ? undefined : result?.error || container.message || 'Order rejected by SoDEX',
-      network: 'testnet',
+      network,
       timestamp: Date.now(),
       raw,
     },

@@ -10,9 +10,19 @@
 // The private key never leaves the browser.
 
 import { keccak256, stringToHex } from 'viem';
+import {
+  getSodexChainId,
+  SODEX_MAINNET_CHAIN_ID,
+  SODEX_TESTNET_CHAIN_ID,
+  type SodexNetwork,
+} from './sodexNetwork';
 
-export const SODEX_TESTNET_CHAIN_ID = 138565;
-export const SODEX_MAINNET_CHAIN_ID = 286623;
+export {
+  getSodexChainId,
+  SODEX_MAINNET_CHAIN_ID,
+  SODEX_TESTNET_CHAIN_ID,
+};
+export type { SodexNetwork };
 
 export const OrderSide = { BUY: 1, SELL: 2 } as const;
 export const OrderType = { LIMIT: 1, MARKET: 2 } as const;

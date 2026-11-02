@@ -6,18 +6,23 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useWalletConnection } from '@/components/WalletConnectionProvider';
 import { toast } from '@/lib/toast';
 import type { BuilderFeeDailyStats, BuilderFeeStats } from '@/lib/sodexBuilder';
+import type { SodexNetwork } from '@/lib/sodexOrderSigning';
+import type { SodexSpotAccountBalance } from '@/lib/sodex';
 
 interface BuilderIdentity {
-  network: 'testnet';
+  network: SodexNetwork;
   accountID: number | null;
   builderID: string | null;
 }
 
 interface BuilderStatsResponse {
-  network: 'testnet';
+  network: SodexNetwork;
   builderID: string;
+  builderAddress: string;
   summary: BuilderFeeStats | null;
   dailyChart: BuilderFeeDailyStats[];
+  spotBalances: SodexSpotAccountBalance[];
+  statsError: string | null;
   fetchedAt: number;
 }
 
@@ -60,6 +65,7 @@ export function SoDEXBuilderIdCard() {
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || 'Unable to load SoDEX Builder statistics.');
       setStats(body as BuilderStatsResponse);
+      setStatsError(body.statsError ?? null);
     } catch (loadError) {
       setStats(null);
       setStatsError(loadError instanceof Error ? loadError.message : 'Unable to load SoDEX Builder statistics.');
@@ -104,7 +110,7 @@ export function SoDEXBuilderIdCard() {
       </CardHeader>
       <CardContent className="space-y-3">
         <p className="text-sm text-text-secondary">
-          This is TradeFirewall’s fee-receiving SoDEX Testnet account. Users must approve this ID before eligible orders can request a builder fee.
+          This is TradeFirewall’s fee-receiving SoDEX {visibleIdentity?.network ?? 'testnet'} account. Users must approve this ID before eligible orders can request a builder fee.
         </p>
         <div className="flex flex-wrap items-center gap-3">
           <output
@@ -141,18 +147,41 @@ export function SoDEXBuilderIdCard() {
             Connected user account ID: <span className="font-mono">{visibleIdentity.accountID}</span>
           </p>
         )}
-        <p className="text-xs text-text-secondary">TradeFirewall Testnet Builder ID</p>
+        {stats?.builderAddress && (
+          <p className="text-xs text-text-secondary">
+            Builder owner: <span className="font-mono">{stats.builderAddress}</span>
+          </p>
+        )}
+        <p className="text-xs text-text-secondary">
+          TradeFirewall {visibleIdentity?.network ?? 'testnet'} Builder ID
+        </p>
         <section className="space-y-3 border-t border-border pt-4" aria-label="SoDEX-reported Builder statistics">
           <div className="flex flex-wrap items-baseline justify-between gap-2">
             <h3 className="text-sm font-semibold text-text-primary">Builder performance</h3>
             <span className="text-xs text-text-secondary">
-              {stats ? `SoDEX Testnet · updated ${new Date(stats.fetchedAt).toLocaleTimeString()}` : 'Reported by SoDEX'}
+              {stats ? `SoDEX ${stats.network} · updated ${new Date(stats.fetchedAt).toLocaleTimeString()}` : 'Reported by SoDEX'}
             </span>
           </div>
           {loadingStats && <p className="text-sm text-text-secondary">Loading Builder statistics…</p>}
           {statsError && <p role="alert" className="text-sm text-danger">{statsError}</p>}
           {!loadingStats && stats && (
             <>
+              <section className="space-y-2" aria-label="Builder Spot account balances">
+                <h4 className="text-sm font-medium text-text-primary">Builder Spot balance</h4>
+                {stats.spotBalances.length === 0 ? (
+                  <p className="text-sm text-text-secondary">No Spot balances returned for the configured Builder account.</p>
+                ) : (
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                    {stats.spotBalances.map((balance) => (
+                      <BuilderStat
+                        key={balance.id}
+                        label={`${balance.coin} total`}
+                        value={balance.total}
+                      />
+                    ))}
+                  </div>
+                )}
+              </section>
               {stats.summary ? (
                 <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                   <BuilderStat label="Builder fees" value={stats.summary.builderFee} />

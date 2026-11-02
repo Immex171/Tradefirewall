@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { sodexAPI } from '@/lib/sodex';
+import { getSodexAPI } from '@/lib/sodex';
+import { getConfiguredSodexNetwork } from '@/lib/sodexNetwork';
 
 export async function POST(request: NextRequest) {
   try {
+    const network = getConfiguredSodexNetwork(request.cookies.get('sodex-network')?.value);
+    const sodexAPI = getSodexAPI(network);
     const tradeInput = await request.json();
 
     // Validate input

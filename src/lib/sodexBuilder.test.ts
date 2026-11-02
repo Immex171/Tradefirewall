@@ -6,25 +6,40 @@ import {
   fetchBuilderStats,
   getConfiguredBuilderAddress,
   getConfiguredBuilderID,
+  getConfiguredSodexNetwork,
+  getSodexApiRoot,
   getSodexTestnetApiRoot,
   normalizeBuilderID,
   recoverBuilderApprovalSigner,
   toSodexBuilderApiSign,
   validateBuilderFeeRate,
+  verifyBuilderApprovalState,
 } from './sodexBuilder';
 
 const originalSpotUrl = process.env.SODEX_TESTNET_SPOT_URL;
+const originalMainnetSpotUrl = process.env.SODEX_MAINNET_SPOT_URL;
 const originalBuilderID = process.env.SODEX_BUILDER_ID;
 const originalBuilderAddress = process.env.SODEX_BUILDER_ADDRESS;
+const originalMainnetBuilderID = process.env.SODEX_MAINNET_BUILDER_ID;
+const originalMainnetBuilderAddress = process.env.SODEX_MAINNET_BUILDER_ADDRESS;
+const originalUseTestnet = process.env.SODEX_USE_TESTNET;
 
 afterEach(() => {
   vi.unstubAllGlobals();
   if (originalSpotUrl === undefined) delete process.env.SODEX_TESTNET_SPOT_URL;
   else process.env.SODEX_TESTNET_SPOT_URL = originalSpotUrl;
+  if (originalMainnetSpotUrl === undefined) delete process.env.SODEX_MAINNET_SPOT_URL;
+  else process.env.SODEX_MAINNET_SPOT_URL = originalMainnetSpotUrl;
   if (originalBuilderID === undefined) delete process.env.SODEX_BUILDER_ID;
   else process.env.SODEX_BUILDER_ID = originalBuilderID;
   if (originalBuilderAddress === undefined) delete process.env.SODEX_BUILDER_ADDRESS;
   else process.env.SODEX_BUILDER_ADDRESS = originalBuilderAddress;
+  if (originalMainnetBuilderID === undefined) delete process.env.SODEX_MAINNET_BUILDER_ID;
+  else process.env.SODEX_MAINNET_BUILDER_ID = originalMainnetBuilderID;
+  if (originalMainnetBuilderAddress === undefined) delete process.env.SODEX_MAINNET_BUILDER_ADDRESS;
+  else process.env.SODEX_MAINNET_BUILDER_ADDRESS = originalMainnetBuilderAddress;
+  if (originalUseTestnet === undefined) delete process.env.SODEX_USE_TESTNET;
+  else process.env.SODEX_USE_TESTNET = originalUseTestnet;
 });
 
 describe('builder fee validation', () => {
@@ -66,6 +81,23 @@ describe('builder fee validation', () => {
     delete process.env.SODEX_BUILDER_ADDRESS;
     expect(getConfiguredBuilderAddress()).toBeNull();
   });
+
+  it('keeps testnet as the default and reads separate mainnet builder configuration', () => {
+    delete process.env.SODEX_USE_TESTNET;
+    process.env.SODEX_BUILDER_ID = '60497';
+    process.env.SODEX_BUILDER_ADDRESS = '0x0000000000000000000000000000000000000001';
+    process.env.SODEX_MAINNET_BUILDER_ID = '70497';
+    process.env.SODEX_MAINNET_BUILDER_ADDRESS = '0x0000000000000000000000000000000000000002';
+
+    expect(getConfiguredSodexNetwork()).toBe('testnet');
+    expect(getConfiguredBuilderID()).toBe('60497');
+    expect(getConfiguredBuilderAddress()).toBe('0x0000000000000000000000000000000000000001');
+
+    process.env.SODEX_USE_TESTNET = 'false';
+    expect(getConfiguredSodexNetwork()).toBe('mainnet');
+    expect(getConfiguredBuilderID()).toBe('70497');
+    expect(getConfiguredBuilderAddress()).toBe('0x0000000000000000000000000000000000000002');
+  });
 });
 
 describe('builder approval typed data', () => {
@@ -98,6 +130,19 @@ describe('builder approval typed data', () => {
       builderID: '202',
       maxFeeRate: 50,
     });
+  });
+
+  it('builds Mainnet builder approvals with the Mainnet chain ID', () => {
+    const mainnet = buildBuilderApprovalTypedData({
+      accountID: 101,
+      builderID: '202',
+      maxFeeRate: 50,
+      nonce: 1760373925003,
+      network: 'mainnet',
+    });
+
+    expect(mainnet.domain.chainId).toBe(286623);
+    expect(mainnet.message.chainID).toBe(286623);
   });
 
   it('recovers the approving master wallet from a signed action', async () => {
@@ -134,6 +179,13 @@ describe('builder API configuration and status parsing', () => {
     expect(() => getSodexTestnetApiRoot()).toThrow(/HTTPS SoDEX testnet/);
   });
 
+  it('keeps Mainnet API and builder identity configuration separate', () => {
+    process.env.SODEX_MAINNET_SPOT_URL = 'https://mainnet-gw.sodex.dev/api/v1/spot';
+    expect(getSodexApiRoot('mainnet')).toBe('https://mainnet-gw.sodex.dev/api/v1');
+    process.env.SODEX_MAINNET_SPOT_URL = 'https://testnet-gw.sodex.dev/api/v1/spot';
+    expect(() => getSodexApiRoot('mainnet')).toThrow(/SoDEX mainnet/);
+  });
+
   it('parses approval arrays and preserves builder IDs as decimal strings', async () => {
     process.env.SODEX_TESTNET_SPOT_URL = 'https://testnet-gw.sodex.dev/api/v1/spot';
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
@@ -153,6 +205,36 @@ describe('builder API configuration and status parsing', () => {
       'https://testnet-gw.sodex.dev/api/v1/user/0x0000000000000000000000000000000000000001/builders',
       expect.objectContaining({ cache: 'no-store' })
     );
+  });
+
+  it('rejects approval status when either engine list is missing', async () => {
+    process.env.SODEX_TESTNET_SPOT_URL = 'https://testnet-gw.sodex.dev/api/v1/spot';
+    for (const data of [
+      { spot: [], perps: undefined },
+      { spot: undefined, perps: [] },
+    ]) {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(
+        JSON.stringify({ code: 0, data }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      )));
+
+      await expect(fetchBuilderApprovals('0x0000000000000000000000000000000000000001'))
+        .rejects.toThrow('SoDEX returned an invalid builder approval list.');
+    }
+  });
+
+  it('verifies approval and requires the builder to be absent from both lists after revocation', () => {
+    const approvals = {
+      spot: [{ userID: 1, builderID: '60497', feeRate: 50 }],
+      perps: [{ userID: 1, builderID: '60497', feeRate: 50 }],
+    };
+    expect(verifyBuilderApprovalState(approvals, '60497', 50)).toBe(true);
+    expect(verifyBuilderApprovalState(approvals, '60497', 0)).toBe(false);
+    expect(verifyBuilderApprovalState({
+      spot: [],
+      perps: [{ userID: 1, builderID: '60497', feeRate: 0 }],
+    }, '60497', 0)).toBe(false);
+    expect(verifyBuilderApprovalState({ spot: [], perps: [] }, '60497', 0)).toBe(true);
   });
 
   it('fetches official builder summary and daily chart responses without deriving fees', async () => {

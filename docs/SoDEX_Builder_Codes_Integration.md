@@ -257,9 +257,12 @@ Keep analytics honest. If an endpoint or data field is unavailable, show an appr
 
 Maintain strict network separation.
 
-- Keep testnet execution as the default.
-- Preserve the existing `SODEX_USE_TESTNET` guard.
-- Do not enable mainnet execution as a side effect of implementing builder codes.
+- Keep Testnet as the default.
+- Use `SODEX_USE_TESTNET=false` as the explicit Mainnet opt-in.
+- Keep Builder IDs, owner addresses, API roots, and typed-data chain IDs network-specific.
+- Never infer Mainnet values from Testnet configuration.
+- Mainnet uses the same server-side risk gate and browser-wallet signature requirement.
+- Do not initiate or submit a Mainnet transaction without the user's explicit wallet confirmation.
 - Never expose API secrets, private keys, or signing credentials to the browser.
 - Validate all client input server-side.
 - Apply authentication, authorization, rate limiting, and CSRF/origin protections as appropriate to the existing architecture.

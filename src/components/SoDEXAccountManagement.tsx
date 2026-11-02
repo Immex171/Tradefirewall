@@ -4,7 +4,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { toast } from '@/lib/toast';
-import { ensureSodexTestnetChain } from '@/lib/sodexWallet';
+import { ensureSodexChain, fetchSodexNetwork } from '@/lib/sodexWallet';
+import type { SodexNetwork } from '@/lib/sodexOrderSigning';
 import { useWalletConnection } from '@/components/WalletConnectionProvider';
 
 interface AccountBalance {
@@ -39,7 +40,7 @@ interface AccountMarket {
 }
 
 interface AccountSnapshot {
-  network: 'testnet';
+  network: SodexNetwork;
   accountID: number;
   balances: AccountBalance[];
   orders: AccountOrder[];
@@ -60,6 +61,7 @@ export function SoDEXAccountManagement({ onAnalyzeExit }: SoDEXAccountManagement
   const [loading, setLoading] = useState(false);
   const [busyOrder, setBusyOrder] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [network, setNetwork] = useState<SodexNetwork>('testnet');
   const refreshInProgress = useRef(false);
 
   const refreshAccount = useCallback(async () => {
@@ -71,6 +73,7 @@ export function SoDEXAccountManagement({ onAnalyzeExit }: SoDEXAccountManagement
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || 'Unable to load SoDEX account activity.');
       setSnapshot(body as AccountSnapshot);
+      setNetwork(body.network);
       setError(null);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Unable to load SoDEX account activity.');
@@ -88,15 +91,31 @@ export function SoDEXAccountManagement({ onAnalyzeExit }: SoDEXAccountManagement
     return () => window.clearInterval(timer);
   }, [walletAddress, refreshAccount]);
 
+  useEffect(() => {
+    let active = true;
+    void fetchSodexNetwork()
+      .then((configuredNetwork) => {
+        if (active) setNetwork(configuredNetwork);
+      })
+      .catch((networkError: unknown) => {
+        if (active) setError(networkError instanceof Error ? networkError.message : 'Unable to load the configured SoDEX network.');
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const connectWallet = async () => {
     if (!window.ethereum) {
-      setError('Install an EIP-1193 wallet such as MetaMask to view your SoDEX Testnet account.');
+      setError('Install an EIP-1193 wallet such as MetaMask to view your SoDEX account.');
       return;
     }
     setError(null);
     try {
+      const network = await fetchSodexNetwork();
+      setNetwork(network);
       await requestWalletConnection();
-      await ensureSodexTestnetChain();
+      await ensureSodexChain(network);
     } catch (connectError) {
       setError(connectError instanceof Error ? connectError.message : 'Wallet connection failed.');
     }
@@ -112,7 +131,8 @@ export function SoDEXAccountManagement({ onAnalyzeExit }: SoDEXAccountManagement
       if (accounts?.[0]?.toLowerCase() !== walletAddress.toLowerCase()) {
         throw new Error('The connected wallet changed. Reconnect the wallet that owns this SoDEX account.');
       }
-      await ensureSodexTestnetChain();
+      const network = snapshot?.network ?? await fetchSodexNetwork();
+      await ensureSodexChain(network);
 
       const preparedResponse = await fetch('/api/sodex/cancel-order', {
         method: 'POST',
@@ -127,6 +147,7 @@ export function SoDEXAccountManagement({ onAnalyzeExit }: SoDEXAccountManagement
       });
       const prepared = await preparedResponse.json();
       if (!preparedResponse.ok) throw new Error(prepared.error || 'Unable to prepare cancellation.');
+      await ensureSodexChain(prepared.network);
 
       const signature = await window.ethereum.request({
         method: 'eth_signTypedData_v4',
@@ -141,6 +162,7 @@ export function SoDEXAccountManagement({ onAnalyzeExit }: SoDEXAccountManagement
           params: prepared.params,
           nonce: prepared.nonce,
           signature,
+          network: prepared.network,
         }),
       });
       const result = await submitResponse.json();
@@ -208,6 +230,8 @@ export function SoDEXAccountManagement({ onAnalyzeExit }: SoDEXAccountManagement
       analysisSupported: market.analysisSupported,
     }];
   });
+  const activeNetwork = snapshot?.network ?? network;
+  const networkName = activeNetwork === 'testnet' ? 'Testnet' : 'Mainnet';
 
   const symbolForOrder = (order: AccountOrder) => {
     const market = snapshot?.markets.find((item) =>
@@ -231,7 +255,7 @@ export function SoDEXAccountManagement({ onAnalyzeExit }: SoDEXAccountManagement
     <Card className="terminal-card border-primary/20">
       <CardHeader>
         <CardTitle className="flex items-center justify-between gap-3 text-card-heading">
-          <span>SoDEX Testnet Account</span>
+          <span>SoDEX {networkName} Account</span>
           <span className="text-xs font-normal text-text-secondary">
             {walletAddress ? `${walletAddress.slice(0, 6)}…${walletAddress.slice(-4)}` : 'Wallet not connected'}
           </span>
@@ -241,7 +265,7 @@ export function SoDEXAccountManagement({ onAnalyzeExit }: SoDEXAccountManagement
         {!walletAddress ? (
           <div className="space-y-3">
             <p className="text-sm text-text-secondary">
-              Connect the wallet used for your SoDEX Testnet trades to monitor open orders, fills, and available Spot balances.
+              Connect the wallet used for your SoDEX {networkName} trades to monitor open orders, fills, and available Spot balances.
             </p>
             <Button onClick={connectWallet} className="btn-primary">Connect wallet</Button>
           </div>
